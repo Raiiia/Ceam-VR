@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laberinto Matematico VR - Cesar Rajapakse</title>
+<script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #02030a; overflow: hidden; }
+  #info {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 10; max-width: 90vw; padding: 8px 14px; border-radius: 8px;
+    font: 14px/1.4 system-ui, sans-serif; color: #bff6ff;
+    background: rgba(2, 8, 30, .75); border: 1px solid #00e5ff; text-align: center;
+    backdrop-filter: blur(8px);
+  }
+  #credit {
+    position: fixed; left: 10px; bottom: 10px; z-index: 10;
+    font: 11px/1.4 system-ui, sans-serif; color: #7ff3ff; opacity: .7;
+  }
+  #loading-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    background: #02030a; color: #00e5ff;
+    font: 600 18px system-ui, sans-serif;
+    transition: opacity 1s ease;
+  }
+  #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+  #audio-btn {
+    position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20;
+    padding: 8px 16px; border-radius: 8px;
+    background: rgba(2, 8, 30, .85); color: #00e5ff;
+    border: 1px solid #00e5ff; cursor: pointer;
+    font: 600 14px system-ui, sans-serif;
+    display: none;
+  }
+  #audio-btn.show { display: block; }
+  @media (max-width: 700px) { #info { bottom: 34px; } }
+</style>
+</head>
+<body>
+<div id="loading-overlay">Cargando experiencia VR...</div>
+<button id="audio-btn" onclick="initAudio()">🔊 Activar Sonido</button>
+<div id="info">Escritorio: WASD mover, raton mirar, clic respuestas. Quest 3: stick izq caminar, stick der giro, gatillo elegir.</div>
+<div id="credit">© 2026 Cesar Rajapakse</div>
+
+<a-scene renderer="antialias: true; foveationLevel: 2" background="color: #02040c"
+         fog="type: exponential; color: #02040c; density: 0.03"
+         cursor="rayOrigin: mouse; fuse: false"
+         raycaster="objects: .clickable; far: 30"
+         loading-screen="enabled: false">
+
+  <!-- Estrellas -->
+  <a-entity id="starfield" star-layer="count: 4500"></a-entity>
+
+  <!-- Luces -->
+  <a-entity light="type: ambient; color: #4a5aa8; intensity: 0.9"></a-entity>
+  <a-entity light="type: hemisphere; color: #8c5dff; groundColor: #00e5ff; intensity: 0.7"></a-entity>
+
+  <!-- Rig con locomocion -->
+  <a-entity id="rig" position="0 0 2.5" vr-locomotion="speed: 2.4">
+    <a-entity id="cam" camera="near: 0.05; far: 1000" look-controls position="0 1.6 0">
+    </a-entity>
+    <a-entity id="lhand" laser-controls="hand: left"
+              raycaster="objects: .clickable; far: 15; lineColor: #00e5ff; lineOpacity: 0.9"></a-entity>
+    <a-entity id="rhand" laser-controls="hand: right"
+              raycaster="objects: .clickable; far: 15; lineColor: #ff2bd6; lineOpacity: 0.9"></a-entity>
+  </a-entity>
+  <!-- Teletransporte: en la escena, no dentro de la camara -->
+  <a-entity id="teleportMarker"
+            visible="false"
+            geometry="primitive: ring; radiusInner: 0.35; radiusOuter: 0.45"
+            material="color: #00ffa3; shader: flat; opacity: 0.85; transparent: true"
+            rotation="-90 0 0">
+    <a-entity geometry="primitive: circle; radius: 0.32"
+              material="color: #00ffa3; shader: flat; opacity: 0.25; transparent: true"></a-entity>
+  </a-entity>
+  <a-entity id="teleportArc" visible="false"
+            line="start: 0.15 -0.2 0; end: 0 -1.4 -3; color: #00ffa3; opacity: 0.7"></a-entity>
+</a-scene>
+
+<script>
+/* =====================================================================
+   0. CONFIGURACION Y UTILIDADES
+   ===================================================================== */
+const PATH = [
+  { x: 0,   z: 0 },
+  { x: 0,   z: -14 },
+  { x: 14,  z: -14 },
+  { x: 14,  z: -28 },
+  { x: 0,   z: -28 },
+  { x: -14, z: -28 }
+];
+
+const NEON = ['#00e5ff', '#7c4dff', '#ff2bd6', '#00ffa3', '#ffb300', '#ff5252'];
+const N_PUZZLES = 5;
+const QUESTIONS_PER_ROOM = 3;
+const LIVES_PER_ROOM = 3;
+const ROOM_NAMES = ['Sala 1', 'Sala 2', 'Sala 3', 'Sala 4', 'Sala 5', 'Meta'];
+
+const scene = document.querySelector('a-scene');
+const rnd  = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const pick = arr => arr[rnd(0, arr.length - 1)];
+const gcd  = (a, b) => b ? gcd(b, a % b) : a;
+const frac = (n, d) => { const g = gcd(n, d); const a = n / g, b = d / g; return b === 1 ? String(a) : a + '/' + b; };
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = rnd(0, i); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function mk(tag, attrs, parent) {
+  const e = document.createElement(tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || scene).appendChild(e);
+  return e;
+}
+function isValidPosition(x, z) {
+  for (let i = 0; i <= state.opened; i++) {
+    let rx = PATH[i].x, rz = PATH[i].z;
+    if (Math.abs(x - rx) < 3.2 && Math.abs(z - rz) < 3.2) return true;
+  }
+  for (let i = 0; i < state.opened; i++) {
+    let p1 = PATH[i], p2 = PATH[i+1];
+    let minX = Math.min(p1.x, p2.x) - 1.3, maxX = Math.max(p1.x, p2.x) + 1.3;
+    let minZ = Math.min(p1.z, p2.z) - 1.3, maxZ = Math.max(p1.z, p2.z) + 1.3;
+    if (x > minX && x < maxX && z > minZ && z < maxZ) return true;
+  }
+  return false;
+}
+
+/* =====================================================================
+   1. AUDIO Y MUSICA DE FONDO INMERSIVA
+   ===================================================================== */
+const AudioFX = (() => {
+  let ctx = null, master = null, musicGain = null, musicOsc1 = null, musicOsc2 = null, musicFilter = null;
+  
+  function init() {
+    if (ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.6;
+    master.connect(ctx.destination);
+    
+    musicGain = ctx.createGain(); musicGain.gain.value = 0.55; musicGain.connect(master);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2600; lp.connect(musicGain);
+    const rev = makeReverb(), wet = ctx.createGain(); wet.gain.value = 0.6;
+    lp.connect(rev); rev.connect(wet); wet.connect(musicGain);
+    musicBus = ctx.createGain(); musicBus.connect(lp);
+    startHum();
+  }
+
+  let musicBus = null, barIdx = 0;
+  const CHORDS = [{ r: 60, m: [0, 4, 7] }, { r: 57, m: [0, 3, 7] }, { r: 53, m: [0, 4, 7] }, { r: 55, m: [0, 4, 7] }];
+  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+  function makeReverb() {
+    const len = Math.floor(ctx.sampleRate * 2.8), buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    }
+    const cv = ctx.createConvolver(); cv.buffer = buf; return cv;
+  }
+  function pnote(freq, t, vol, dur) {
+    const g = ctx.createGain(), g2 = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    g2.gain.value = 0.25;
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
+    o1.type = 'triangle'; o1.frequency.value = freq;
+    o2.type = 'sine'; o2.frequency.value = freq * 2;
+    o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(musicBus);
+    o1.start(t); o2.start(t); o1.stop(t + dur + 0.1); o2.stop(t + dur + 0.1);
+  }
+  function bar() {
+    if (!ctx) return;
+    if (ctx.state === 'running') {
+      const c = CHORDS[barIdx++ % CHORDS.length], t0 = ctx.currentTime + 0.05;
+      pnote(mtof(c.r - 24), t0, 0.16, 6);
+      const pool = c.m.concat(c.m.map(i => i + 12));
+      let t = t0 + 0.4;
+      for (let i = rnd(3, 5); i > 0; i--) {
+        if (Math.random() < 0.8) pnote(mtof(c.r + pick(pool)), t, 0.1, 4);
+        t += 0.5 + Math.random() * 0.9;
+      }
+      if (Math.random() < 0.5) pnote(mtof(72 + pick([0, 2, 4, 7, 9])), t, 0.07, 5);
+    }
+    setTimeout(bar, 6500 + Math.random() * 5000);
+  }
+  let humGain = null, musicStarted = false;
+  function startHum() {
+    humGain = ctx.createGain(); humGain.gain.value = 0;
+    humGain.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 3);
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 480;
+    f.connect(humGain); humGain.connect(master);
+    [[82.4, 'sawtooth', 0.35], [110, 'sine', 0.8], [164.8, 'triangle', 0.4], [55, 'sine', 0.5]].forEach(function (o) {
+      const osc = ctx.createOscillator(), g = ctx.createGain();
+      osc.type = o[1]; osc.frequency.value = o[0]; g.gain.value = o[2];
+      osc.connect(g); g.connect(f); osc.start();
+    });
+    const lfo = ctx.createOscillator(), lg = ctx.createGain();
+    lfo.frequency.value = 0.13; lg.gain.value = 140; lfo.connect(lg); lg.connect(f.frequency); lfo.start();
+  }
+  function duckHum(v, sec) {
+    if (!humGain) return;
+    const t = ctx.currentTime;
+    humGain.gain.cancelScheduledValues(t); humGain.gain.setValueAtTime(humGain.gain.value, t);
+    humGain.gain.linearRampToValueAtTime(v, t + sec);
+  }
+  function startMusic() { duckHum(0, 3); if (!musicStarted) { musicStarted = true; bar(); } }
+
+  function resume() {
+    init();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().then(() => {
+        document.getElementById('audio-btn').classList.remove('show');
+      }).catch(() => {
+        document.getElementById('audio-btn').classList.add('show');
+      });
+    }
+  }
+
+  function tone(freq, dur, type, delay, vol) {
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type || 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || 0.1, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g).connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+
+  return {
+    resume,
+    tone,
+    startMusic, duckHum,
+    isSuspended: () => !!ctx && ctx.state === 'suspended',
+    success: () => { tone(523, 0.1, 'sine', 0, 0.15); tone(659, 0.1, 'sine', 0.1, 0.15); tone(784, 0.2, 'sine', 0.2, 0.15); },
+    error: () => { tone(180, 0.15, 'sawtooth', 0, 0.15); tone(140, 0.2, 'sawtooth', 0.1, 0.1); },
+    blip: () => tone(1000, 0.05, 'sine', 0, 0.08),
+    doorOpen: () => { tone(400, 0.1, 'square', 0, 0.1); tone(600, 0.1, 'square', 0.1, 0.1); tone(800, 0.3, 'sine', 0.2, 0.15); },
+
+    crystalChime: () => {
+      [1568, 1976, 2349, 2637, 3136, 3520].forEach((f, i) => {
+        tone(f, 0.35, 'sine', i * 0.07, 0.09);
+      });
+      setTimeout(() => { tone(2637, 1.8, 'triangle', 0, 0.06); tone(3951, 1.6, 'sine', 0.1, 0.04); }, 500);
+    },
+
+    victoryFanfare: () => {
+      if (!ctx) return;
+      const t0 = ctx.currentTime;
+      const chord = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.5];
+      chord.forEach((f, i) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = i % 2 ? 'sine' : 'triangle';
+        o.frequency.value = f;
+        const start = t0 + i * 0.13;
+        const dur = 16 + Math.random() * 4;
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.linearRampToValueAtTime(0.07, start + 0.5);
+        g.gain.linearRampToValueAtTime(0.05, start + 3);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        o.connect(g).connect(musicBus);
+        o.start(start); o.stop(start + dur + 0.5);
+      });
+      const bass = ctx.createOscillator(), bg = ctx.createGain();
+      bass.type = 'sine'; bass.frequency.value = 130.81;
+      bg.gain.setValueAtTime(0.0001, t0);
+      bg.gain.linearRampToValueAtTime(0.06, t0 + 2);
+      bg.gain.exponentialRampToValueAtTime(0.0001, t0 + 18);
+      bass.connect(bg).connect(musicBus);
+      bass.start(t0); bass.stop(t0 + 19);
+    }
+  };
+})();
+
+window.initAudio = () => AudioFX.resume();
+
+/* =====================================================================
+   2. COMPONENTES A-FRAME Y GRAFICOS 3D MEJORADOS
+   ===================================================================== */
+AFRAME.registerComponent('star-layer', {
+  schema: { count: { default: 4500 } },
+  init: function () {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(this.data.count * 3);
+    const col = new Float32Array(this.data.count * 3);
+    for (let i = 0; i < this.data.count; i++) {
+      pos[i*3] = (Math.random() - 0.5) * 500;
+      pos[i*3+1] = (Math.random() - 0.5) * 250;
+      pos[i*3+2] = (Math.random() - 0.5) * 500 - 100;
+      const c = Math.random();
+      if (c > 0.75) { col[i*3]=1; col[i*3+1]=0.85; col[i*3+2]=0.7; }
+      else if (c > 0.5) { col[i*3]=0.6; col[i*3+1]=0.85; col[i*3+2]=1; }
+      else { col[i*3]=1; col[i*3+1]=1; col[i*3+2]=1; }
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.7, vertexColors: true, transparent: true, opacity: 0.85, sizeAttenuation: true, fog: false });
+    const pts = new THREE.Points(geo, mat);
+    this.el.setObject3D('stars', pts);
+  }
+});
+
+// Locomocion VR + teletransporte
+AFRAME.registerComponent('vr-locomotion', {
+  schema: { speed: { default: 2.4 } },
+  init: function () {
+    this.axis = { x: 0, y: 0 };
+    this.keys = {};
+    this.turnReady = true;
+    this.dir = new THREE.Vector3();
+    this.cam = document.querySelector('#cam').object3D;
+    this.rigObj = this.el.object3D;
+    this.teleportAim = new THREE.Vector3();
+    this.teleportValid = false;
+    const self = this;
+    
+    document.querySelector('#lhand').addEventListener('thumbstickmoved', function (e) {
+      self.axis.x = e.detail.x; self.axis.y = e.detail.y;
+    });
+    document.querySelector('#rhand').addEventListener('thumbstickmoved', function (e) {
+      if (state.teleportMode) return;
+      const x = e.detail.x;
+      if (Math.abs(x) < 0.4) self.turnReady = true;
+      else if (self.turnReady) {
+        self.rigObj.rotation.y += (x > 0 ? -1 : 1) * Math.PI / 6;
+        self.turnReady = false;
+        AudioFX.blip();
+      }
+    });
+    document.querySelector('#rhand').addEventListener('triggerdown', function () {
+      if (state.teleportMode && self.teleportValid) self.doTeleport();
+    });
+    window.addEventListener('keydown', function (e) {
+      if (e.code === 'KeyT') self.doTeleport(true);
+      self.keys[e.code] = true;
+    });
+    window.addEventListener('keyup', function (e) { self.keys[e.code] = false; });
+    window.addEventListener('blur', function () { self.keys = {}; });
+  },
+  
+  updateTeleportAim: function (marker, arc) {
+    const handEl = document.querySelector('#rhand');
+    if (!handEl || !handEl.object3D) { marker.setAttribute('visible', false); arc.setAttribute('visible', false); this.teleportValid = false; return; }
+    const hand = handEl.object3D;
+    hand.updateMatrixWorld(true);
+    const origin = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    hand.getWorldPosition(origin);
+    direction.set(0, 0, -1).transformDirection(hand.matrixWorld);
+    
+    if (Math.abs(direction.y) < 1e-4) { marker.setAttribute('visible', false); arc.setAttribute('visible', false); this.teleportValid = false; return; }
+    const ray_t = -origin.y / direction.y;
+    if (ray_t < 0.5 || ray_t > 13) { marker.setAttribute('visible', false); arc.setAttribute('visible', false); this.teleportValid = false; return; }
+    
+    const target = origin.clone().add(direction.clone().multiplyScalar(ray_t));
+    const finalTarget = new THREE.Vector3(target.x, 0.02, target.z);
+    this.teleportValid = isValidPosition(finalTarget.x, finalTarget.z) && ray_t < 12;
+    
+    marker.setAttribute('visible', true);
+    arc.setAttribute('visible', true);
+    marker.setAttribute('position', finalTarget.x + ' ' + finalTarget.y + ' ' + finalTarget.z);
+    marker.setAttribute('material', 'color', this.teleportValid ? '#00ffa3' : '#ff5252');
+    arc.setAttribute('line', 'start', origin.x + ' ' + origin.y + ' ' + origin.z);
+    arc.setAttribute('line', 'end', finalTarget.x + ' ' + finalTarget.y + ' ' + finalTarget.z);
+    arc.setAttribute('line', 'color', this.teleportValid ? '#00ffa3' : '#ff5252');
+    this.teleportAim.copy(finalTarget);
+  },
+  
+  doTeleport: function (fromKeyboard) {
+    if (state.done) return;
+    let target = this.teleportAim.clone();
+    if (fromKeyboard) {
+      const e = this.cam.matrixWorld.elements;
+      this.dir.set(-e[8], 0, -e[10]);
+      if (this.dir.lengthSq() < 1e-6) this.dir.set(0, 0, -1).applyEuler(new THREE.Euler(0, this.rigObj.rotation.y, 0));
+      else this.dir.normalize();
+      const p = this.rigObj.position;
+      let step = 2.5;
+      target.set(p.x + this.dir.x * step, 0.02, p.z + this.dir.z * step);
+      while (step > 0.5 && !isValidPosition(target.x, target.z)) {
+        step -= 0.5;
+        target.set(p.x + this.dir.x * step, 0.02, p.z + this.dir.z * step);
+      }
+      if (!isValidPosition(target.x, target.z)) return;
+    }
+    if (!this.teleportValid && !fromKeyboard) return;
+    AudioFX.blip();
+    this.rigObj.position.set(target.x, 0, target.z);
+  },
+  
+  tick: function (t, dt) {
+    if (!this.marker) { this.marker = document.querySelector('#teleportMarker'); this.arc = document.querySelector('#teleportArc'); }
+    if (state.teleportMode) { this.markerOn = true; this.updateTeleportAim(this.marker, this.arc); }
+    else if (this.markerOn) { this.markerOn = false; this.marker.setAttribute('visible', false); this.arc.setAttribute('visible', false); }
+    if (state.teleportMode) return;
+    dt = Math.min(dt, 50);
+    let ix = this.axis.x, iy = this.axis.y;
+    const k = this.keys;
+    if (k.KeyW || k.ArrowUp)    iy = -1;
+    if (k.KeyS || k.ArrowDown)  iy =  1;
+    if (k.KeyA || k.ArrowLeft)  ix = -1;
+    if (k.KeyD || k.ArrowRight) ix =  1;
+    const mag = Math.hypot(ix, iy);
+    if (mag < 0.15) return;
+    if (mag > 1) { ix /= mag; iy /= mag; }
+    
+    const e = this.cam.matrixWorld.elements;
+    this.dir.set(-e[8], 0, -e[10]);
+    if (this.dir.lengthSq() < 1e-6) this.dir.set(0, 0, -1).applyEuler(new THREE.Euler(0, this.rigObj.rotation.y, 0));
+    this.dir.normalize();
+    
+    const fwd = { x: this.dir.x, z: this.dir.z };
+    const right = { x: -fwd.z, z: fwd.x };
+    const forward = -iy, strafe = ix;
+    const s = this.data.speed * dt / 1000;
+    const moveX = (fwd.x * forward + right.x * strafe) * s;
+    const moveZ = (fwd.z * forward + right.z * strafe) * s;
+    const pos = this.rigObj.position;
+    const newX = pos.x + moveX, newZ = pos.z + moveZ;
+    
+    if (isValidPosition(newX, newZ)) { pos.x = newX; pos.z = newZ; }
+    else if (isValidPosition(pos.x, newZ)) pos.z = newZ;
+    else if (isValidPosition(newX, pos.z)) pos.x = newX;
+  }
+});
+
+AFRAME.registerComponent('btn-skin', {
+  schema: { w: { default: 1 }, h: { default: 0.3 }, d: { default: 0.06 }, rim: { default: '#46d8ff' } },
+  init: function () {
+    const o = this.data, g = new THREE.Group();
+    const add = function (geo, color, op, y, z) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color, transparent: op < 1, opacity: op, depthWrite: op >= 1 }));
+      m.position.set(0, y, z); g.add(m);
+    };
+    add(new THREE.PlaneGeometry(o.w + 0.08, o.h + 0.08), '#000000', 0.45, -0.04, -o.d / 2 - 0.015);
+    add(new THREE.BoxGeometry(o.w + 0.06, o.h + 0.06, 0.03), o.rim, 1, 0, -o.d / 2 + 0.005);
+    add(new THREE.PlaneGeometry(o.w * 0.92, o.h * 0.36), '#ffffff', 0.16, o.h * 0.2, o.d / 2 + 0.002);
+    this.el.setObject3D('skin', g);
+  }
+});
+
+AFRAME.registerComponent('canvas-hud', {
+  schema: { w: { default: 1 }, h: { default: 1 }, px: { default: 512 }, depth: { default: true } },
+  init: function () {
+    const d = this.data;
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = d.px; this.canvas.height = Math.round(d.px * d.h / d.w);
+    this.ctx = this.canvas.getContext('2d');
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthTest: d.depth, depthWrite: false, fog: false });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w, d.h), mat);
+    mesh.renderOrder = d.depth ? 1 : 999;
+    this.el.setObject3D('mesh', mesh);
+    if (this.el._paintFn) this.redraw(this.el._paintFn);
+  },
+  redraw: function (fn) {
+    const c = this.ctx, W = this.canvas.width, H = this.canvas.height;
+    c.clearRect(0, 0, W, H); fn(c, W, H); this.tex.needsUpdate = true;
+  }
+});
+function paint(el, fn) {
+  el._paintFn = fn;
+  const c = el.components && el.components['canvas-hud'];
+  if (c && c.ctx) c.redraw(fn);
+}
+function drawHeart(c, cx, cy, s, on) {
+  c.beginPath();
+  c.moveTo(cx, cy + s * 0.45);
+  c.bezierCurveTo(cx - s * 0.75, cy - s * 0.05, cx - s * 0.45, cy - s * 0.6, cx, cy - s * 0.2);
+  c.bezierCurveTo(cx + s * 0.45, cy - s * 0.6, cx + s * 0.75, cy - s * 0.05, cx, cy + s * 0.45);
+  c.closePath();
+  c.fillStyle = on ? '#ff2bd6' : 'rgba(74,58,74,0.55)';
+  c.fill();
+  c.lineWidth = Math.max(2, s * 0.07);
+  c.strokeStyle = on ? '#ffd6f6' : '#7a5a7a';
+  c.stroke();
+}
+function drawHearts(c, x, y, s, lives) {
+  for (let i = 0; i < LIVES_PER_ROOM; i++) drawHeart(c, x + i * s * 1.15, y, s, i < lives);
+}
+
+let _glow = null;
+function glowSprite() {
+  if (_glow) return _glow;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  return (_glow = new THREE.CanvasTexture(c));
+}
+AFRAME.registerComponent('sparkles', {
+  schema: { color: { default: '#00e5ff' }, count: { default: 55 }, radius: { default: 3.2 }, height: { default: 3.8 } },
+  init: function () {
+    const d = this.data;
+    this.layers = [];
+    [[0.7, 0.16], [0.3, 0.45]].forEach((L, li) => {
+      const n = Math.max(1, Math.round(d.count * L[0])), pos = new Float32Array(n * 3), ph = [];
+      for (let i = 0; i < n; i++) {
+        pos[i * 3] = (Math.random() - 0.5) * d.radius * 2;
+        pos[i * 3 + 1] = Math.random() * d.height + 0.2;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * d.radius * 2;
+        ph.push({ v: 0.08 + Math.random() * 0.25, p: Math.random() * 6.28 });
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.PointsMaterial({ color: d.color, size: L[1], map: glowSprite(), transparent: true, opacity: 0.85,
+        depthWrite: false, blending: THREE.AdditiveBlending, fog: false, sizeAttenuation: true });
+      const pts = new THREE.Points(geo, mat); pts.frustumCulled = false;
+      this.el.setObject3D('sp' + li, pts);
+      this.layers.push({ pts: pts, n: n, ph: ph, pos: pos });
+    });
+  },
+  tick: function (t, dt) {
+    const s = dt / 1000, top = this.data.height + 0.2;
+    this.layers.forEach(function (L, li) {
+      for (let i = 0; i < L.n; i++) {
+        const q = L.ph[i];
+        L.pos[i * 3 + 1] += q.v * s;
+        L.pos[i * 3] += Math.sin(t / 1400 + q.p) * 0.22 * s;
+        L.pos[i * 3 + 2] += Math.cos(t / 1700 + q.p) * 0.22 * s;
+        if (L.pos[i * 3 + 1] > top) L.pos[i * 3 + 1] = 0.2;
+      }
+      L.pts.geometry.attributes.position.needsUpdate = true;
+      L.pts.material.opacity = 0.65 + 0.3 * Math.sin(t / 800 + li * 2);
+    });
+  }
+});
+
+AFRAME.registerComponent('ring-burst', {
+  schema: { color: { default: '#00ffa3' } },
+  init: function () {
+    this.el.setAttribute('geometry', 'primitive: ring; radiusInner: 0.1; radiusOuter: 0.15');
+    this.el.setAttribute('material', `color: ${this.data.color}; shader: flat; transparent: true; opacity: 0`);
+    this.active = false;
+    this.time = 0;
+  },
+  burst: function () {
+    this.active = true;
+    this.time = 0;
+    this.el.setAttribute('visible', true);
+  },
+  tick: function (t, dt) {
+    if (!this.active) return;
+    this.time += dt / 1000;
+    const p = this.time * 2.5;
+    if (p >= 1) { this.active = false; this.el.setAttribute('visible', false); return; }
+    this.el.setAttribute('scale', `${1 + p*4} ${1 + p*4} 1`);
+    this.el.setAttribute('material', 'opacity', 1 - p);
+  }
+});
+
+// Asteroides que se deslizan por el cielo y rotan lentamente
+AFRAME.registerComponent('asteroid-drift', {
+  schema: {
+    speed: { default: 3 },
+    axis:  { default: 'x' },
+    range: { default: 100 },
+    spin:  { default: 0.15 }
+  },
+  init: function () {
+    this.startPos = this.el.object3D.position.clone();
+  },
+  tick: function (t, dt) {
+    if (dt > 200) return;
+    const s = (dt / 1000) * this.data.speed;
+    const p = this.el.object3D.position;
+    const d = this.data;
+    if (d.axis === 'x') {
+      p.x += s;
+      if (p.x > this.startPos.x + d.range) p.x = this.startPos.x - d.range;
+    } else if (d.axis === 'z') {
+      p.z += s;
+      if (p.z > this.startPos.z + d.range) p.z = this.startPos.z - d.range;
+    } else {
+      p.y += s;
+      if (p.y > this.startPos.y + d.range) p.y = this.startPos.y - d.range;
+    }
+    this.el.object3D.rotation.y += s * d.spin;
+    this.el.object3D.rotation.x += s * d.spin * 0.65;
+  }
+});
+
+/* =====================================================================
+   3. GENERADORES DE ACERTIJOS
+   ===================================================================== */
+function mc(topic, q, correct, wrongs, hint) {
+  correct = String(correct);
+  const w = [...new Set(wrongs.map(String))].filter(x => x !== correct).slice(0, 3);
+  let n = 1;
+  const m = correct.match(/^(-?\d+(?:\.\d+)?)(.*)$/);
+  while (m && w.length < 3 && n < 20) {
+    const cand = (parseFloat(m[1]) + n) + m[2];
+    if (cand !== correct && !w.includes(cand)) w.push(cand);
+    n++;
+  }
+  const opts = shuffle([correct, ...w]);
+  return { topic, q, opts, answer: opts.indexOf(correct), hint };
+}
+
+function genFrac() {
+  const d = pick([4, 5, 6, 8, 10]), a = rnd(1, d - 3), b = rnd(1, d - a - 1), r = a + b;
+  return mc('Fracciones', 'Suma las fracciones:\n' + a + '/' + d + ' + ' + b + '/' + d,
+    r + '/' + d,
+    [r + '/' + (d + d), (r + 1) + '/' + d, r + '/' + (d + 1), (r + 2) + '/' + d, (r + 1) + '/' + (d + d)],
+    'Si el denominador es igual, solo suma los numeradores y deja el mismo denominador.');
+}
+function genArea() {
+  const b = rnd(2, 9), h = rnd(2, 9), A = b * h;
+  return mc('Areas', 'Un cuadro mide ' + b + ' m de largo y ' + h + ' m de ancho.\nCual es su area?', A + ' m2',
+    [b + h, 2 * (b + h), A + b, A + h, A - 1, A + 1].map(v => v + ' m2'),
+    'Area del rectangulo = largo x ancho.');
+}
+function genMult() {
+  const a = rnd(3, 9), b = rnd(3, 9), t = a * b;
+  return mc('Multiplicacion', 'Hay ' + a + ' bolsas con ' + b + ' dulces cada una.\nCuantos dulces hay en total?', t,
+    [a + b, t + a, t - b, t + 10, t - 10, (a + 1) * b].filter(v => v > 0),
+    'Multiplica ' + a + ' x ' + b + '.');
+}
+function genPct() {
+  const p = pick([10, 25, 50]), n = p === 25 ? pick([40, 80, 100, 200]) : pick([20, 40, 60, 80, 100, 200]), c = p * n / 100;
+  return mc('Porcentajes', 'Cuanto es el ' + p + '% de ' + n + '?', c,
+    [n - c, c + 5, c * 2, c + 10, c + 1, c - 1].filter(v => v > 0),
+    p === 50 ? 'El 50% es la mitad.' : p === 10 ? 'El 10% es dividir entre 10.' : 'El 25% es la cuarta parte: divide entre 4.');
+}
+function genPerim() {
+  const l = rnd(2, 9), w = rnd(2, 9), P = 2 * (l + w);
+  return mc('Perimetros', 'Un patio mide ' + l + ' m de largo y ' + w + ' m de ancho.\nCual es su perimetro?', P + ' m',
+    [l * w, l + w, P + 2, P - 2, P + l, 2 * l + w].map(v => v + ' m'),
+    'Perimetro = suma de todos los lados: 2 x (largo + ancho).');
+}
+function genDiv() {
+  const q = rnd(3, 9), d = rnd(2, 9), t = q * d;
+  return mc('Division', 'Hay ' + t + ' galletas para repartir entre ' + d + ' amigos por igual.\nCuantas recibe cada uno?', q,
+    [q + 1, q - 1, q + 2, q + 3, d, t - d].filter(v => v > 0),
+    'Divide ' + t + ' entre ' + d + '.');
+}
+const GENS = [genFrac, genArea, genMult, genPct, genPerim, genDiv];
+
+/* =====================================================================
+   4. ESTADO DEL JUEGO
+   ===================================================================== */
+const state = {
+  room: 0, opened: 0, score: 0, errors: 0, totalQuestions: 0,
+  roomQuestions: [], qIndex: 0, lives: LIVES_PER_ROOM, locked: false,
+  done: false, hint: false, msg: '', msgColor: '', roomScore: 0, nextTimer: null, teleportMode: false,
+};
+
+/* =====================================================================
+   5. TEXTURAS Y CONSTRUCCION DEL LABERINTO
+   ===================================================================== */
+const _texCache = {};
+function gridTex(line, bg) {
+  const key = line + '|' + bg;
+  if (_texCache[key]) return _texCache[key];
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const wall = bg.indexOf('rgba') === 0;
+  const R = parseInt(line.slice(1, 3), 16), G = parseInt(line.slice(3, 5), 16), B = parseInt(line.slice(5, 7), 16);
+  let seed = 7; for (const ch of key) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  for (let py = 0; py < 16; py++) for (let px = 0; px < 16; px++) {
+    const v = (rand() * 16) | 0;
+    let col;
+    if (wall) {
+      const edge = (py & 3) === 0 || ((px + ((py >> 2) & 1) * 4) & 7) === 0;
+      col = edge ? `rgb(${R * 0.55 | 0},${G * 0.55 | 0},${B * 0.55 | 0})`
+                 : `rgb(${14 + R * 0.10 + v | 0},${18 + G * 0.10 + v | 0},${40 + B * 0.10 + v | 0})`;
+    } else {
+      const edge = (px & 7) === 0 || (py & 7) === 0, alt = ((px >> 3) + (py >> 3)) & 1;
+      col = edge ? `rgb(${R * 0.7 | 0},${G * 0.7 | 0},${B * 0.7 | 0})`
+                 : `rgb(${(alt ? 22 : 12) + R * 0.06 + v | 0},${(alt ? 28 : 18) + G * 0.06 + v | 0},${(alt ? 58 : 38) + B * 0.06 + v | 0})`;
+    }
+    x.fillStyle = col; x.fillRect(px * 8, py * 8, 8, 8);
+  }
+  _texCache[key] = c.toDataURL();
+  return _texCache[key];
+}
+
+const doors = [];
+const roomParticles = {};
+
+function wallPiece(x, y, z, w, h, rotY, color, opacity) {
+  return mk('a-plane', {
+    position: x + ' ' + y + ' ' + z,
+    rotation: '0 ' + rotY + ' 0',
+    width: w, height: h,
+    material: {
+      src: gridTex(color, 'rgba(4,8,24,0.75)'),
+      repeat: (w / 2) + ' ' + (h / 2),
+      shader: 'flat', transparent: true,
+      opacity: opacity !== undefined ? opacity : 0.92,
+      side: 'double'
+    }
+  });
+}
+
+function buildRoom(r, color) {
+  const cx = PATH[r].x, cz = PATH[r].z;
+  const S = 7;
+  
+  mk('a-plane', {
+    position: cx + ' 0 ' + cz, rotation: '-90 0 0', width: S, height: S,
+    material: { src: gridTex(color, '#060a1c'), repeat: '7 7', shader: 'flat' }
+  });
+  // Techo translucido para ver el cielo
+  mk('a-plane', {
+    position: cx + ' 4 ' + cz, rotation: '90 0 0', width: S, height: S,
+    material: { color: '#050816', shader: 'flat', opacity: 0.55, transparent: true }
+  });
+  
+  const prev = r > 0 ? PATH[r-1] : null;
+  const next = r < N_PUZZLES ? PATH[r+1] : null;
+  const hasN = (prev && prev.z < cz) || (next && next.z < cz);
+  const hasS = (prev && prev.z > cz) || (next && next.z > cz);
+  const hasE = (prev && prev.x > cx) || (next && next.x > cx);
+  const hasW = (prev && prev.x < cx) || (next && next.x < cx);
+  
+  const buildSide = (hasGap, rx, rz, rot) => {
+    if (!hasGap) {
+      wallPiece(cx + rx, 2, cz + rz, S, 4, rot, color);
+    } else {
+      const off = 2.5;
+      if (rot === 0 || rot === 180) {
+        wallPiece(cx + rx - off, 2, cz + rz, 2, 4, rot, color);
+        wallPiece(cx + rx + off, 2, cz + rz, 2, 4, rot, color);
+      } else {
+        wallPiece(cx + rx, 2, cz + rz - off, 2, 4, rot, color);
+        wallPiece(cx + rx, 2, cz + rz + off, 2, 4, rot, color);
+      }
+    }
+  };
+  
+  buildSide(hasN, 0, -3.5, 0);
+  buildSide(hasS, 0, 3.5, 180);
+  buildSide(hasW, -3.5, 0, 90);
+  buildSide(hasE, 3.5, 0, -90);
+  
+  mk('a-entity', {
+    position: cx + ' 3.4 ' + cz,
+    text: { value: ROOM_NAMES[r], align: 'center', width: 4, color: color, font: 'monoid' }
+  });
+  
+  const pb = mk('a-entity', { position: cx + ' 0 ' + cz }, null);
+  pb.setAttribute('sparkles', `color: ${color}; count: 70; radius: 3.2`);
+  roomParticles[r] = pb;
+  decorateRoom(r, cx, cz, color);
+}
+
+function decorateRoom(r, cx, cz, color) {
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (s, k) {
+    mk('a-box', { position: (cx + s[0] * 3.25) + ' 2 ' + (cz + s[1] * 3.25), width: 0.5, height: 4, depth: 0.5,
+      material: { color: '#0b1030', emissive: color, emissiveIntensity: 0.55 } });
+    mk('a-octahedron', { position: (cx + s[0] * 2.3) + ' 3 ' + (cz + s[1] * 2.3), radius: 0.28,
+      material: { color: color, emissive: color, emissiveIntensity: 0.8 },
+      animation__spin: 'property: rotation; to: 0 360 0; loop: true; dur: ' + (6000 + k * 700) + '; easing: linear',
+      animation__bob: 'property: position.y; from: 2.8; to: 3.3; dir: alternate; loop: true; dur: 1800; easing: easeInOutSine' });
+  });
+  mk('a-entity', { position: cx + ' 3.5 ' + cz, light: 'type: point; color: ' + color + '; intensity: 0.9; distance: 11' });
+  if (r === N_PUZZLES) [-2.9, 2.9].forEach(function (dz) {
+    mk('a-octahedron', { position: cx + ' 2 ' + (cz + dz), radius: 0.6,
+      material: { color: '#ffd45c', emissive: '#ffb300', emissiveIntensity: 0.9, metalness: 0.5 },
+      animation__spin: 'property: rotation; to: 0 360 0; loop: true; dur: 5000; easing: linear' });
+  });
+}
+
+function buildSky() {
+  [[-70, 25, -90, 12, '#ff8a3d'], [80, 35, -140, 20, '#7c4dff'], [10, 45, -200, 30, '#00e5ff']].forEach(function (p) {
+    mk('a-sphere', { position: p[0] + ' ' + p[1] + ' ' + p[2], radius: p[3],
+      material: { color: p[4], emissive: p[4], emissiveIntensity: 0.4, fog: false } });
+  });
+  mk('a-ring', { position: '-70 25 -90', 'radius-inner': 16, 'radius-outer': 23, rotation: '70 0 20',
+    material: { color: '#ffd9a0', shader: 'flat', opacity: 0.6, transparent: true, side: 'double', fog: false } });
+}
+
+function buildDistantPlanet() {
+  const group = mk('a-entity', {
+    position: '140 55 -300',
+    rotation: '18 30 12'
+  });
+
+  // Cuerpo del planeta (gigante gaseoso violeta)
+  mk('a-sphere', {
+    radius: 40,
+    'segments-width': 48,
+    'segments-height': 32,
+    material: {
+      color: '#6a4a9a',
+      emissive: '#4a2a80',
+      emissiveIntensity: 0.4,
+      shader: 'standard',
+      roughness: 0.85,
+      metalness: 0.05,
+      fog: false
+    }
+  }, group);
+
+  // Brillo atmosferico
+  mk('a-sphere', {
+    radius: 40.5,
+    'segments-width': 48,
+    'segments-height': 32,
+    material: {
+      color: '#a080ff',
+      shader: 'flat',
+      transparent: true,
+      opacity: 0.18,
+      fog: false,
+      blending: 'additive'
+    }
+  }, group);
+
+  // Halo exterior
+  mk('a-sphere', {
+    radius: 48,
+    material: {
+      color: '#8060d0',
+      shader: 'flat',
+      transparent: true,
+      opacity: 0.08,
+      fog: false,
+      blending: 'additive',
+      side: 'back'
+    }
+  }, group);
+
+  // Anillo principal girando
+  const ring1 = mk('a-ring', {
+    'radius-inner': 50,
+    'radius-outer': 72,
+    rotation: '-75 0 0',
+    material: {
+      color: '#c0a0ff',
+      shader: 'flat',
+      transparent: true,
+      opacity: 0.55,
+      side: 'double',
+      fog: false
+    }
+  }, group);
+  ring1.setAttribute('animation__spin',
+    'property: rotation; to: -75 360 0; loop: true; dur: 100000; easing: linear');
+
+  // Anillo exterior sutil
+  mk('a-ring', {
+    'radius-inner': 76,
+    'radius-outer': 84,
+    rotation: '-75 0 0',
+    material: {
+      color: '#7a5ad0',
+      shader: 'flat',
+      transparent: true,
+      opacity: 0.28,
+      side: 'double',
+      fog: false
+    }
+  }, group);
+
+  // Luna orbitando
+  const moonParent = mk('a-entity', {}, group);
+  moonParent.setAttribute('animation__orbit',
+    'property: rotation; to: 0 360 0; loop: true; dur: 60000; easing: linear');
+  mk('a-sphere', {
+    position: '100 8 0',
+    radius: 4.5,
+    material: {
+      color: '#d0d0e0',
+      emissive: '#a0a0c0',
+      emissiveIntensity: 0.3,
+      shader: 'standard',
+      roughness: 0.7,
+      metalness: 0.1,
+      fog: false
+    }
+  }, moonParent);
+}
+
+function buildAsteroids() {
+  const shapes = ['a-dodecahedron', 'a-icosahedron', 'a-octahedron'];
+  const count = 16;
+
+  for (let i = 0; i < count; i++) {
+    const size  = 0.6 + Math.random() * 2.4;
+    const y     = 15 + Math.random() * 28;
+    const z     = -70 + Math.random() * 70;
+    const x     = -110 + Math.random() * 220;
+    const speed = 1.8 + Math.random() * 3.2;
+    const range = 90 + Math.random() * 90;
+    const shape = pick(shapes);
+    const axis  = Math.random() < 0.8 ? 'x' : 'z';
+
+    mk(shape, {
+      position: x + ' ' + y + ' ' + z,
+      radius: size,
+      rotation: (Math.random() * 360) + ' ' + (Math.random() * 360) + ' ' + (Math.random() * 360),
+      scale: (1.05 + Math.random() * 0.55) + ' ' +
+             (0.7 + Math.random() * 0.55) + ' ' +
+             (0.85 + Math.random() * 0.5),
+      material: {
+        color: pick(['#5a5040', '#4a4438', '#3a3a48', '#5a4a3a', '#4a3830', '#605044']),
+        emissive: '#2a2018',
+        emissiveIntensity: 0.55,
+        shader: 'standard',
+        roughness: 0.9,
+        metalness: 0.15,
+        fog: false
+      },
+      'asteroid-drift': 'speed: ' + speed + '; axis: ' + axis +
+                        '; range: ' + range + '; spin: ' + (0.08 + Math.random() * 0.28)
+    });
+  }
+}
+
+function buildCorridor(r, color) {
+  const p1 = PATH[r], p2 = PATH[r+1];
+  const isZ = p1.x === p2.x;
+  const cx = (p1.x + p2.x) / 2;
+  const cz = (p1.z + p2.z) / 2;
+  const len = 7;
+  
+  if (isZ) {
+    mk('a-plane', {
+      position: cx + ' 0 ' + cz, rotation: '-90 0 0', width: 3, height: len,
+      material: { src: gridTex(color, '#060a1c'), repeat: '3 7', shader: 'flat' }
+    });
+    mk('a-plane', {
+      position: cx + ' 4 ' + cz, rotation: '90 0 0', width: 3, height: len,
+      material: { color: '#050816', shader: 'flat', opacity: 0.6, transparent: true }
+    });
+    wallPiece(cx - 1.5, 2, cz, len, 4, 90, color, 0.88);
+    wallPiece(cx + 1.5, 2, cz, len, 4, -90, color, 0.88);
+  } else {
+    mk('a-plane', {
+      position: cx + ' 0 ' + cz, rotation: '-90 0 0', width: len, height: 3,
+      material: { src: gridTex(color, '#060a1c'), repeat: '7 3', shader: 'flat' }
+    });
+    mk('a-plane', {
+      position: cx + ' 4 ' + cz, rotation: '90 0 0', width: len, height: 3,
+      material: { color: '#050816', shader: 'flat', opacity: 0.6, transparent: true }
+    });
+    wallPiece(cx, 2, cz - 1.5, len, 4, 0, color, 0.88);
+    wallPiece(cx, 2, cz + 1.5, len, 4, 180, color, 0.88);
+  }
+}
+
+function buildMaze() {
+  for (let r = 0; r <= N_PUZZLES; r++) {
+    buildRoom(r, NEON[r % NEON.length]);
+    if (r < N_PUZZLES) buildCorridor(r, NEON[(r + 1) % NEON.length]);
+  }
+  
+  mk('a-entity', {
+    position: (PATH[0].x + 3.4) + ' 1.6 ' + PATH[0].z, rotation: '0 -90 0',
+    text: {
+      value: 'Stick izq: caminar\nStick der: giro / teleport\nGatillo: elegir / saltar\n\nResuelve ' + QUESTIONS_PER_ROOM + ' retos\npara abrir cada puerta.',
+      align: 'center', width: 3.2, color: '#bff6ff', wrapCount: 30, font: 'monoid'
+    }
+  });
+  
+  for (let i = 0; i < N_PUZZLES; i++) {
+    const p1 = PATH[i], p2 = PATH[i+1];
+    let dx = 0, dz = 0, rot = 0;
+    if (p2.z < p1.z) { dz = -3.5; rot = 0; }
+    else if (p2.z > p1.z) { dz = 3.5; rot = 180; }
+    else if (p2.x > p1.x) { dx = 3.5; rot = -90; }
+    else if (p2.x < p1.x) { dx = -3.5; rot = 90; }
+    
+    const root = mk('a-entity', { position: (p1.x + dx) + ' 0 ' + (p1.z + dz), rotation: '0 ' + rot + ' 0' });
+    const frame = mk('a-entity', {}, root);
+    
+    mk('a-box', { position: '-1.5 2 0', width: 0.25, height: 4, depth: 0.25, material: { color: NEON[(i + 1) % NEON.length], shader: 'flat' } }, frame);
+    mk('a-box', { position: '1.5 2 0', width: 0.25, height: 4, depth: 0.25, material: { color: NEON[(i + 1) % NEON.length], shader: 'flat' } }, frame);
+    
+    mk('a-box', { position: '0 3.95 0', width: 3.25, height: 0.25, depth: 0.25, material: { color: NEON[(i + 1) % NEON.length], shader: 'flat' } }, frame);
+    const plane = mk('a-plane', {
+      position: '0 1.9 0', width: 2.8, height: 3.8,
+      material: { color: '#ff2bd6', opacity: 0.25, transparent: true, shader: 'flat', side: 'double' }
+    }, frame);
+    
+    const label = mk('a-entity', {
+      position: '0 1.9 0.03',
+      text: { value: 'Puerta bloqueada', align: 'center', width: 4, color: '#ffffff', font: 'monoid' }
+    }, frame);
+    
+    const ring = mk('a-entity', { position: '0 1.9 0.1' }, frame);
+    ring.setAttribute('ring-burst', 'color: #00ffa3');
+    
+    doors.push({ root, frame, plane, label, ring });
+  }
+}
+
+function openDoor(i) {
+  const d = doors[i];
+  d.plane.setAttribute('material', 'color', '#00ffa3');
+  d.label.setAttribute('text', 'value', 'Puerta abierta');
+  
+  d.frame.setAttribute('animation__open', {
+    property: 'position', to: '0 4.4 0',
+    dur: 1000, delay: 300, easing: 'easeInOutQuad'
+  });
+  
+  if (d.ring.components['ring-burst']) d.ring.components['ring-burst'].burst();
+  AudioFX.doorOpen();
+}
+
+function resetDoor(d) {
+  d.frame.removeAttribute('animation__open');
+  d.frame.setAttribute('position', '0 0 0');
+  d.plane.setAttribute('material', 'color', '#ff2bd6');
+  d.label.setAttribute('text', 'value', 'Puerta bloqueada');
+}
+
+/* =====================================================================
+   6. PANEL DE SALA (unica UI flotante en el mundo)
+   ===================================================================== */
+const P = { opts: [] };
+const BTN = '#10234a';
+const WRONG = '#b3203f';
+
+function mkBtn(parent, label, x, y, w, h, fn, color) {
+  const rim = { '#6a1a3a': '#ff5c8a', '#1a3a6a': '#5ca8ff' }[color] || '#46d8ff';
+  const b = mk('a-box', {
+    class: 'clickable', position: x + ' ' + y + ' 0.03',
+    width: w, height: h, depth: 0.06,
+    material: { color: color || BTN, shader: 'flat' },
+    'btn-skin': 'w: ' + w + '; h: ' + h + '; d: 0.06; rim: ' + rim
+  }, parent);
+  b.labelEl = mk('a-entity', {
+    position: '0 0 0.045',
+    text: { value: label, align: 'center', width: w * 1.9, color: '#ffffff', font: 'monoid' }
+  }, b);
+  b.addEventListener('mouseenter', function () {
+    b.object3D.scale.set(1.05, 1.05, 1);
+    AudioFX.blip();
+  });
+  b.addEventListener('mouseleave', function () { b.object3D.scale.set(1, 1, 1); });
+  b.addEventListener('click', fn);
+  const release = function () { if (b._pressed) { b._pressed = false; b.object3D.position.z = b._z; } };
+  b.addEventListener('mousedown', function () { if (!b._pressed) { b._pressed = true; b._z = b.object3D.position.z; b.object3D.position.z = b._z - 0.015; } });
+  b.addEventListener('mouseup', release);
+  b.addEventListener('mouseleave', release);
+  b.baseColor = color || BTN;
+  return b;
+}
+function txt(parent, x, y, o) {
+  if (!o.font) o.font = 'monoid';
+  return mk('a-entity', { position: x + ' ' + y + ' 0.02', text: o }, parent);
+}
+
+function layoutHUD() { /* intencionalmente vacio */ }
+
+function buildPanel() {
+  const root = mk('a-entity', { id: 'panel' });
+  
+  mk('a-plane', { position: '0 0 -0.02', width: 4.3, height: 3.5, material: { color: '#00e5ff', shader: 'flat', opacity: 0.4, transparent: true } }, root);
+  mk('a-plane', { position: '0 0 -0.01', width: 4.2, height: 3.4, material: { color: '#0a0f1d', shader: 'flat' } }, root);
+  mk('a-plane', { width: 4.14, height: 3.34, material: { color: '#050816', opacity: 0.95, transparent: true, shader: 'flat' } }, root);
+  
+  P.head  = txt(root, -1.9, 1.45, { value: '', align: 'left', anchor: 'left', width: 2.8, color: '#00e5ff' });
+  P.status = mk('a-entity', { position: '0 1.15 0.02', 'canvas-hud': 'w: 4; h: 0.4; px: 1600' }, root);
+  
+  P.q     = txt(root, 0, 0.5, { value: '', align: 'center', width: 3.8, wrapCount: 42, color: '#ffffff' });
+  P.hint  = txt(root, 0, -0.05, { value: '', align: 'center', width: 3.6, wrapCount: 50, color: '#ffd45c' });
+  
+  for (let i = 0; i < 4; i++) {
+    const x = (i % 2 ? 0.95 : -0.95), y = (i < 2 ? -0.5 : -1.02);
+    const b = mkBtn(root, '', x, y, 1.7, 0.42, function () { answer(i); });
+    P.opts.push(b);
+  }
+  
+  P.helpBtn  = mkBtn(root, 'Ayuda', -1.4, -1.5, 1.0, 0.28, function () {
+    if (state.done) return;
+    state.hint = !state.hint;
+    render();
+  }, '#1a3a6a');
+  
+  P.tpBtn = mkBtn(root, 'Pasos', 0, -1.5, 1.0, 0.28, toggleTeleport);
+  
+  P.resetBtn = mkBtn(root, 'Reiniciar', 1.4, -1.5, 1.0, 0.28, restart, '#6a1a3a');
+  
+  P.root = root;
+}
+
+function toggleTeleport() {
+  state.teleportMode = !state.teleportMode;
+  P.tpBtn.labelEl.setAttribute('text', 'value', state.teleportMode ? 'Teleport' : 'Pasos');
+  P.tpBtn.setAttribute('material', 'color', state.teleportMode ? '#005a3a' : BTN);
+  P.tpBtn.baseColor = state.teleportMode ? '#005a3a' : BTN;
+  AudioFX.blip();
+}
+
+function movePanel() {
+  const r = PATH[state.room];
+  const next = PATH[state.room + 1];
+  let dx = 0, dz = 0;
+  if (next) {
+    if (next.z < r.z) dz = -1.4;
+    else if (next.z > r.z) dz = 1.4;
+    else if (next.x > r.x) dx = 1.4;
+    else if (next.x < r.x) dx = -1.4;
+  }
+  P.root.setAttribute('position', (r.x + dx) + ' 1.7 ' + (r.z + dz));
+}
+
+function tickPanel() {
+  const rig = document.querySelector('#rig').object3D;
+  const p = P.root.object3D;
+  const dx = rig.position.x - p.position.x;
+  const dz = rig.position.z - p.position.z;
+  p.rotation.y = Math.atan2(dx, dz);
+}
+
+function render() {
+  const done = state.done;
+  const q = state.roomQuestions[state.qIndex];
+  const head = done ? 'Meta alcanzada' :
+    ('Sala ' + (state.room + 1) + '/' + N_PUZZLES + ' - ' + (q ? q.topic : ''));
+  const sc = 'Aciertos ' + state.score + '  Errores ' + state.errors;
+  
+  P.head.setAttribute('text', 'value', head);
+  const reto = done ? '' : 'Reto ' + Math.min(state.qIndex + 1, QUESTIONS_PER_ROOM) + ' de ' + QUESTIONS_PER_ROOM;
+  paint(P.status, function (c, W, H) {
+    c.textBaseline = 'middle'; c.font = 'bold 50px system-ui, sans-serif';
+    c.textAlign = 'left'; c.fillStyle = '#bff6ff'; c.fillText(reto, 30, H / 2);
+    if (!done) drawHearts(c, 450, H / 2, 70, state.lives);
+    c.textAlign = 'right'; c.fillStyle = '#00ffa3'; c.fillText(sc, W - 30, H / 2);
+  });
+  
+  P.q.setAttribute('text', 'value', done
+    ? 'Laberinto completado!\nAciertos: ' + state.score + ' de ' + state.totalQuestions + '\nErrores: ' + state.errors
+    : (q ? q.q : ''));
+  P.hint.setAttribute('text', 'value', done ? '' : (state.hint && q ? 'Pista: ' + q.hint : state.msg));
+  P.hint.setAttribute('text', 'color', state.hint ? '#ffd45c' : (state.msgColor || '#ffd45c'));
+  
+  P.opts.forEach(function (b, i) {
+    const o = !!(!done && q && q.opts[i] !== undefined);
+    b.object3D.visible = o;
+    if (o) {
+      b.labelEl.setAttribute('text', 'value', String.fromCharCode(65 + i) + ')  ' + q.opts[i]);
+      b.setAttribute('material', 'color', b.baseColor);
+    }
+  });
+  
+  P.helpBtn.object3D.visible = !done;
+  P.tpBtn.object3D.visible = !done;
+  P.resetBtn.labelEl.setAttribute('text', 'value', done ? 'Jugar de nuevo' : 'Reiniciar');
+  P.resetBtn.object3D.position.set(done ? 0 : 1.4, done ? -1.2 : -1.5, 0.03);
+}
+
+/* =====================================================================
+   7. LOGICA DEL JUEGO
+   ===================================================================== */
+function genRoomQuestions() {
+  return Array.from({ length: QUESTIONS_PER_ROOM }, function (_, i) {
+    return GENS[(state.room * 3 + i) % GENS.length]();
+  });
+}
+
+function answer(i) {
+  if (state.locked || state.done) return;
+  const q = state.roomQuestions[state.qIndex];
+  if (!q) return;
+  const b = P.opts[i];
+  if (b.baseColor === WRONG) return;
+  
+  if (i === q.answer) {
+    state.locked = true;
+    state.score++; state.roomScore++;
+    state.msg = 'Correcto!'; state.msgColor = '#00ffa3';
+    b.setAttribute('material', 'color', '#00a86b');
+    b.baseColor = '#00a86b';
+    AudioFX.success();
+    render();
+    state.nextTimer = setTimeout(advanceQuestion, 1200);
+  } else {
+    state.errors++;
+    state.lives--;
+    state.msg = 'Esa no es. Te quedan ' + state.lives + (state.lives === 1 ? ' oportunidad.' : ' oportunidades.'); state.msgColor = '#ff5252';
+    b.setAttribute('material', 'color', WRONG);
+    b.baseColor = WRONG;
+    AudioFX.error();
+    render();
+    if (state.lives <= 0) {
+      state.locked = true;
+      state.msg = 'Sin vidas! Reiniciando sala...'; state.msgColor = '#ff5252'; render();
+      state.nextTimer = setTimeout(function () { restartRoom(); }, 1600);
+    }
+  }
+}
+
+function advanceQuestion() {
+  state.nextTimer = null;
+  state.qIndex++;
+  state.hint = false;
+  state.msg = ''; state.msgColor = '';
+  P.opts.forEach(function (b) { b.baseColor = BTN; b.object3D.scale.set(1, 1, 1); });
+  if (state.qIndex >= QUESTIONS_PER_ROOM) {
+    state.locked = true;
+    openDoor(state.room);
+    state.opened++;
+    state.nextTimer = setTimeout(nextRoom, 1800);
+  } else {
+    state.locked = false;
+    render();
+  }
+}
+
+function nextRoom() {
+  state.nextTimer = null;
+  state.room++;
+  state.qIndex = 0;
+  state.locked = false;
+  state.hint = false;
+  state.msg = ''; state.msgColor = ''; state.roomScore = 0;
+  if (state.room >= N_PUZZLES) {
+    state.done = true;
+    showVictory();
+  } else {
+    state.roomQuestions = genRoomQuestions();
+    state.lives = LIVES_PER_ROOM;
+  }
+  P.opts.forEach(function (b) { b.baseColor = BTN; });
+  movePanel();
+  render();
+}
+
+function restartRoom() {
+  state.nextTimer = null;
+  state.locked = false;
+  state.lives = LIVES_PER_ROOM;
+  state.qIndex = 0;
+  state.hint = false;
+  state.score -= state.roomScore; state.roomScore = 0; state.msgColor = '#ffd45c';
+  state.msg = 'Sala reiniciada. Intentalo otra vez!';
+  state.roomQuestions = genRoomQuestions();
+  P.opts.forEach(function (b) { b.baseColor = BTN; b.object3D.scale.set(1, 1, 1); });
+  
+  const p = PATH[state.room];
+  const rig = document.querySelector('#rig');
+  const prev = state.room > 0 ? PATH[state.room - 1] : null;
+  let px = p.x, pz = p.z;
+  if (prev) {
+    if (prev.z < p.z) pz -= 1.8;
+    else if (prev.z > p.z) pz += 1.8;
+    else if (prev.x > p.x) px += 1.8;
+    else if (prev.x < p.x) px -= 1.8;
+  } else {
+    pz += 2.5;
+  }
+  rig.object3D.position.set(px, 0, pz);
+  rig.object3D.rotation.set(0, 0, 0);
+  movePanel();
+  render();
+}
+
+function restart() {
+  if (state.nextTimer) { clearTimeout(state.nextTimer); state.nextTimer = null; }
+  state.room = 0; state.opened = 0; state.score = 0; state.errors = 0; state.roomScore = 0; state.msgColor = '';
+  state.locked = false; state.done = false; state.hint = false; state.msg = '';
+  state.qIndex = 0;
+  state.lives = LIVES_PER_ROOM;
+  state.totalQuestions = N_PUZZLES * QUESTIONS_PER_ROOM;
+  state.roomQuestions = genRoomQuestions();
+  state.teleportMode = false;
+  doors.forEach(resetDoor);
+  P.opts.forEach(function (b) {
+    b.baseColor = BTN;
+    b.object3D.scale.set(1, 1, 1);
+    b.object3D.visible = true;
+  });
+  P.hint.setAttribute('text', 'color', '#ffd45c');
+  P.helpBtn.object3D.visible = true;
+  
+  if (P.tpBtn) {
+    P.tpBtn.labelEl.setAttribute('text', 'value', 'Pasos');
+    P.tpBtn.setAttribute('material', 'color', BTN);
+    P.tpBtn.baseColor = BTN;
+    P.tpBtn.object3D.visible = true;
+  }
+  
+  const rig = document.querySelector('#rig');
+  rig.object3D.position.set(PATH[0].x, 0, PATH[0].z + 2.5);
+  rig.object3D.rotation.set(0, 0, 0);
+  
+  if (P.root) P.root.setAttribute('visible', true);
+  if (P.resetBtn) P.resetBtn.classList.add('clickable');
+  
+  movePanel(); render();
+}
+
+/* =====================================================================
+   8. ARRANQUE / ESCENA INICIAL
+   ===================================================================== */
+const INTRO = { crack: 5000, doors: 15000, fallback: 38500 };
+let introStarted = false, introDone = false;
+const introDoors = [];
+
+function nebulaTex() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+  const x = c.getContext('2d'); x.fillStyle = '#01020a'; x.fillRect(0, 0, 1024, 512);
+  [[220, 200, 300, '60,90,255'], [520, 300, 340, '140,60,230'], [820, 180, 280, '50,120,255'], [640, 120, 220, '110,50,200']].forEach(function (b) {
+    const g = x.createRadialGradient(b[0], b[1], 0, b[0], b[1], b[2]);
+    g.addColorStop(0, 'rgba(' + b[3] + ',0.18)'); g.addColorStop(1, 'rgba(' + b[3] + ',0)');
+    x.fillStyle = g; x.fillRect(0, 0, 1024, 512);
+  });
+  for (let i = 0; i < 160; i++) { x.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.6 + 0.2) + ')'; x.fillRect(Math.random() * 1024, Math.random() * 512, 1.5, 1.5); }
+  return c.toDataURL();
+}
+
+function glowText(c, txt, x, y, size, color) {
+  c.font = 'bold ' + size + 'px "Trebuchet MS", system-ui, sans-serif';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.shadowColor = color; c.shadowBlur = 50; c.fillStyle = '#e8fbff';
+  c.fillText(txt, x, y); c.fillText(txt, x, y);
+  c.shadowBlur = 0; c.fillText(txt, x, y);
+}
+
+function fadeTo(to, ms) {
+  P.fade.setAttribute('animation__fade', { property: 'material.opacity', to: to, dur: ms, easing: 'linear' });
+}
+
+function buildIntro() {
+  const root = P.intro = mk('a-entity', { id: 'intro', position: '0 0 600' });
+  mk('a-sphere', { position: '0 1.6 0', radius: 45, 'segments-width': 32, 'segments-height': 16,
+    material: { src: nebulaTex(), shader: 'flat', side: 'back', fog: false } }, root);
+  mk('a-entity', { position: '0 0 -3', sparkles: 'color: #9fc8ff; count: 200; radius: 8; height: 6' }, root);
+  mk('a-entity', { position: '0 0 -3', sparkles: 'color: #c39bff; count: 110; radius: 9; height: 6' }, root);
+
+  const title = mk('a-entity', { position: '0 3.5 -6', 'canvas-hud': 'w: 6; h: 2.14; px: 1536' }, root);
+  paint(title, function (c, W, H) {
+    glowText(c, 'Laberinto del', W / 2, H * 0.3, 175, '#00e5ff');
+    glowText(c, 'Conocimiento', W / 2, H * 0.72, 175, '#b07cff');
+  });
+
+  P.crystal = mk('a-octahedron', { position: '0 1.6 -6', radius: 0.5,
+    material: { color: '#00e5ff', emissive: '#00e5ff', emissiveIntensity: 0.9 },
+    animation__spin: 'property: rotation; to: 0 360 0; loop: true; dur: 9000; easing: linear',
+    animation__bob: 'property: position.y; from: 1.5; to: 1.75; dir: alternate; loop: true; dur: 2000; easing: easeInOutSine' }, root);
+  P.crack = mk('a-entity', { position: '0 1.6 -5.4', visible: false, 'canvas-hud': 'w: 1; h: 1.2; px: 400' }, root);
+  paint(P.crack, function (c, W, H) {
+    const pts = [[.5, 0], [.42, .18], [.56, .3], [.45, .5], [.58, .62], [.5, .82], [.6, 1]];
+    c.strokeStyle = '#ffffff'; c.lineWidth = 6; c.lineJoin = 'round'; c.shadowColor = '#ffffff'; c.shadowBlur = 18;
+    c.beginPath(); pts.forEach(function (q, i) { i ? c.lineTo(q[0] * W, q[1] * H) : c.moveTo(q[0] * W, q[1] * H); }); c.stroke();
+    c.lineWidth = 4; c.beginPath(); c.moveTo(.56 * W, .3 * H); c.lineTo(.8 * W, .38 * H); c.lineTo(.86 * W, .55 * H);
+    c.moveTo(.45 * W, .5 * H); c.lineTo(.2 * W, .58 * H); c.stroke();
+  });
+
+  [[-4.5, -6], [4.5, -6], [-8, -3.5], [8, -3.5]].forEach(function (q) {
+    const d = mk('a-entity', { position: q[0] + ' 0 ' + q[1], rotation: '0 ' + (Math.atan2(-q[0], -q[1]) * 180 / Math.PI) + ' 0', visible: false }, root);
+    [[-1.2, 1.9, 0.2, 3.8], [1.2, 1.9, 0.2, 3.8], [0, 3.85, 2.6, 0.2]].forEach(function (b) {
+      mk('a-box', { position: b[0] + ' ' + b[1] + ' 0', width: b[2], height: b[3], depth: 0.2, material: { color: '#ff2a2a', shader: 'flat' } }, d);
+    });
+    d.plane = mk('a-plane', { position: '0 1.8 0', width: 2.2, height: 3.6, material: { color: '#ff1a1a', shader: 'flat', opacity: 0, transparent: true, side: 'double' } }, d);
+    introDoors.push(d);
+  });
+
+  const btn = P.introBtn = mk('a-box', { class: 'clickable', position: '0 0.6 -4.6', width: 2.8, height: 0.7, depth: 0.12,
+    material: { color: '#0a2a55', shader: 'flat' }, 'btn-skin': 'w: 2.8; h: 0.7; d: 0.12; rim: #00e5ff' }, root);
+  mk('a-plane', { position: '0 0 -0.08', width: 3.4, height: 1.2,
+    material: { color: '#00e5ff', shader: 'flat', opacity: 0.25, transparent: true },
+    animation: 'property: material.opacity; from: 0.1; to: 0.4; dir: alternate; loop: true; dur: 1100; easing: easeInOutSine' }, btn);
+  const lab = mk('a-entity', { position: '0 0 0.07', 'canvas-hud': 'w: 2.6; h: 0.55; px: 832' }, btn);
+  paint(lab, function (c, W, H) { glowText(c, 'INICIAR MISIÓN', W / 2, H / 2, 105, '#00e5ff'); });
+  btn.addEventListener('click', startMission);
+
+  const cam = document.querySelector('#cam');
+  P.fade = mk('a-plane', { position: '0 0 -0.3', width: 4, height: 4, material: { color: '#000000', shader: 'flat', transparent: true, opacity: 0, depthTest: false } }, cam);
+  P.fade.addEventListener('loaded', function () { P.fade.getObject3D('mesh').renderOrder = 2000; });
+}
+
+function startIntro() {
+  const rig = document.querySelector('#rig');
+  rig.setAttribute('position', '0 0 600'); rig.setAttribute('rotation', '0 0 0');
+  if (P.root) P.root.setAttribute('visible', false);
+  AudioFX.resume();
+  setTimeout(function () {
+    if (AudioFX.isSuspended() && !introStarted) document.getElementById('audio-btn').classList.add('show');
+  }, 1500);
+}
+
+function startMission() {
+  if (introStarted) return;
+  introStarted = true;
+  P.introBtn.classList.remove('clickable'); P.introBtn.setAttribute('visible', false);
+  AudioFX.resume(); AudioFX.duckHum(0.15, 1.5);
+  const v = new Audio('01.mp3');
+  v.addEventListener('ended', finishIntro);
+  const warn = function () {
+    const i = document.getElementById('info'); i.style.display = '';
+    i.textContent = 'No se pudo reproducir 01.mp3: debe estar junto al HTML (si abres el archivo directo, prueba con un servidor local).';
+  };
+  v.addEventListener('error', warn);
+  v.play().catch(warn);
+  setTimeout(function () {
+    P.crack.setAttribute('visible', true); AudioFX.error();
+    P.crystal.setAttribute('animation__shake', 'property: position.x; from: -0.05; to: 0.05; dur: 50; dir: alternate; loop: 24; easing: linear');
+    P.crystal.setAttribute('animation__dark', 'property: material.emissiveIntensity; to: 0.02; dur: 9000; easing: easeInQuad');
+    P.crystal.setAttribute('animation__tint', 'property: material.color; to: #2a3040; dur: 9000; easing: linear');
+  }, INTRO.crack);
+  setTimeout(function () {
+    AudioFX.error();
+    introDoors.forEach(function (d) {
+      d.setAttribute('visible', true);
+      d.plane.setAttribute('animation__in', 'property: material.opacity; from: 0; to: 0.5; dur: 3000');
+    });
+  }, INTRO.doors);
+  setTimeout(finishIntro, INTRO.fallback);
+}
+
+function finishIntro() {
+  if (introDone) return;
+  introDone = true;
+  fadeTo(1, 1500);
+  setTimeout(function () {
+    restart();
+    P.intro.parentNode.removeChild(P.intro);
+    const lc = document.querySelector('#cam').components['look-controls'];
+    try { lc.yawObject.rotation.y = 0; lc.pitchObject.rotation.x = 0; } catch (e) {}
+    if (P.root) P.root.setAttribute('visible', true);
+    AudioFX.startMusic();
+    fadeTo(0, 1500);
+  }, 1600);
+}
+
+/* =====================================================================
+   9. PANTALLA FINAL DE VICTORIA
+   ===================================================================== */
+const V = {};
+
+function buildVictory() {
+  const root = mk('a-entity', { id: 'victory', position: '0 0 1200', visible: false });
+  V.root = root;
+
+  mk('a-sphere', { position: '0 1.6 0', radius: 75, 'segments-width': 40, 'segments-height': 20,
+    material: { src: nebulaTex(), shader: 'flat', side: 'back', fog: false, color: '#1a1840' } }, root);
+
+  const glowGold = mk('a-sphere', { position: '0 1.6 -10', radius: 2,
+    material: { color: '#ffd45c', shader: 'flat', opacity: 0.35, transparent: true, fog: false, blending: 'additive' } }, root);
+  glowGold.setAttribute('animation__s', 'property: scale; from: 1 1 1; to: 3.5 3.5 1; dir: alternate; loop: true; dur: 1600; easing: easeInOutSine');
+  glowGold.setAttribute('animation__o', 'property: material.opacity; from: 0.15; to: 0.55; dir: alternate; loop: true; dur: 1400; easing: easeInOutSine');
+
+  const glowCyan = mk('a-sphere', { position: '0 1.6 -10', radius: 1.5,
+    material: { color: '#00e5ff', shader: 'flat', opacity: 0.3, transparent: true, fog: false, blending: 'additive' } }, root);
+  glowCyan.setAttribute('animation__s', 'property: scale; from: 1 1 1; to: 4.5 4.5 1; dir: alternate; loop: true; dur: 2200; easing: easeInOutSine');
+  glowCyan.setAttribute('animation__o', 'property: material.opacity; from: 0.1; to: 0.5; dir: alternate; loop: true; dur: 1800; easing: easeInOutSine');
+
+  V.burst = mk('a-ring', { position: '0 1.6 -10', 'radius-inner': 0.1, 'radius-outer': 0.25,
+    material: { color: '#ffd45c', shader: 'flat', opacity: 0, transparent: true, side: 'double', fog: false } }, root);
+
+  mk('a-entity', { position: '0 0 -5', sparkles: 'color: #ffd45c; count: 180; radius: 9; height: 7' }, root);
+  mk('a-entity', { position: '0 0 -5', sparkles: 'color: #00e5ff; count: 180; radius: 9; height: 7' }, root);
+  mk('a-entity', { position: '0 0 -5', sparkles: 'color: #ffffff; count: 80; radius: 7; height: 6' }, root);
+
+  V.crystal = mk('a-octahedron', { position: '0 1.6 -8', radius: 0.8,
+    material: { color: '#00e5ff', emissive: '#00e5ff', emissiveIntensity: 1.4, metalness: 0.3, roughness: 0.2 },
+    animation__spin: 'property: rotation; to: 0 360 0; loop: true; dur: 8000; easing: linear',
+    animation__bob: 'property: position.y; from: 1.5; to: 1.8; dir: alternate; loop: true; dur: 2200; easing: easeInOutSine',
+    animation__glow: 'property: material.emissiveIntensity; from: 1.2; to: 2.4; dir: alternate; loop: true; dur: 1400; easing: easeInOutSine'
+  }, root);
+
+  mk('a-sphere', { position: '0 1.6 -8', radius: 1.3,
+    material: { color: '#bff6ff', shader: 'flat', opacity: 0.15, transparent: true, fog: false, blending: 'additive' } }, root);
+
+  const title = mk('a-entity', { position: '0 4.2 -7', 'canvas-hud': 'w: 8; h: 1.6; px: 1800; depth: false' }, root);
+  paint(title, function (c, W, H) {
+    c.font = 'bold 210px "Trebuchet MS", system-ui, sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.shadowColor = '#ffd45c'; c.shadowBlur = 70;
+    c.fillStyle = '#fff5cc';
+    c.fillText('¡MISIÓN', W / 2, H * 0.28);
+    c.fillText('CUMPLIDA!', W / 2, H * 0.72);
+    c.shadowColor = '#00e5ff'; c.shadowBlur = 25;
+    c.fillStyle = '#e8fbff';
+    c.fillText('¡MISIÓN', W / 2, H * 0.28);
+    c.fillText('CUMPLIDA!', W / 2, H * 0.72);
+  });
+
+  const sub = mk('a-entity', { position: '0 2.9 -7', 'canvas-hud': 'w: 7; h: 0.6; px: 1800; depth: false' }, root);
+  paint(sub, function (c, W, H) {
+    c.font = 'bold 58px "Trebuchet MS", system-ui, sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.shadowColor = '#00e5ff'; c.shadowBlur = 20; c.fillStyle = '#bff6ff';
+    c.fillText('Has restaurado el portal de Secundaria CEAM', W / 2, H / 2);
+  });
+
+  V.scoreEl = mk('a-entity', { position: '0 2.0 -7', 'canvas-hud': 'w: 5.5; h: 0.9; px: 1400; depth: false' }, root);
+
+  const btnRoot = mk('a-entity', { position: '0 0.3 -6' }, root);
+  btnRoot.setAttribute('animation__pulse', 'property: scale; from: 1 1 1; to: 1.06 1.06 1; dir: alternate; loop: true; dur: 700; easing: easeInOutSine');
+
+  const glow = mk('a-plane', { position: '0 0 -0.1', width: 4.4, height: 1.2,
+    material: { color: '#ffd45c', shader: 'flat', opacity: 0.2, transparent: true } }, btnRoot);
+  glow.setAttribute('animation__g', 'property: material.opacity; from: 0.1; to: 0.55; dir: alternate; loop: true; dur: 900; easing: easeInOutSine');
+
+  const btn = mk('a-box', { class: 'clickable', position: '0 0 0', width: 3.6, height: 0.8, depth: 0.14,
+    material: { color: '#4a2a00', shader: 'flat', emissive: '#ffb300', emissiveIntensity: 0.2 },
+    'btn-skin': 'w: 3.6; h: 0.8; d: 0.14; rim: #ffd45c' }, btnRoot);
+  btn.setAttribute('animation__emit', 'property: material.emissiveIntensity; from: 0.15; to: 0.75; dir: alternate; loop: true; dur: 700; easing: easeInOutSine');
+
+  const lab = mk('a-entity', { position: '0 0 0.08', 'canvas-hud': 'w: 3.4; h: 0.65; px: 1280; depth: false' }, btn);
+  paint(lab, function (c, W, H) {
+    c.font = 'bold 108px "Trebuchet MS", system-ui, sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.shadowColor = '#ffd45c'; c.shadowBlur = 40; c.fillStyle = '#fff8dc';
+    c.fillText('REGRESAR AL INICIO', W / 2, H / 2);
+  });
+
+  btn.addEventListener('mouseenter', function () { AudioFX.blip(); });
+  btn.addEventListener('click', function () { window.location.href = 'index.html'; });
+}
+
+function showVictory() {
+  AudioFX.resume();
+  AudioFX.crystalChime();
+  fadeTo(1, 900);
+
+  setTimeout(function () {
+    V.root.setAttribute('visible', true);
+    const rig = document.querySelector('#rig');
+    rig.setAttribute('position', '0 0 1200');
+    rig.setAttribute('rotation', '0 0 0');
+    const lc = document.querySelector('#cam').components['look-controls'];
+    try { lc.yawObject.rotation.y = 0; lc.pitchObject.rotation.x = 0; } catch (e) {}
+
+    paint(V.scoreEl, function (c, W, H) {
+      c.font = 'bold 68px system-ui, sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.shadowColor = '#00ffa3'; c.shadowBlur = 22;
+      c.fillStyle = '#bff6ff';
+      c.fillText('Aciertos: ' + state.score + ' / ' + state.totalQuestions, W / 2, H * 0.28);
+      c.shadowColor = '#ffb300';
+      c.fillStyle = '#ffd45c';
+      c.fillText('Errores: ' + state.errors, W / 2, H * 0.72);
+    });
+
+    if (P.root) P.root.setAttribute('visible', false);
+    if (P.resetBtn) P.resetBtn.classList.remove('clickable');
+
+    V.burst.setAttribute('animation__burst_s', 'property: scale; from: 1 1 1; to: 60 60 1; dur: 2400; easing: easeOutQuad');
+    V.burst.setAttribute('animation__burst_o', 'property: material.opacity; from: 1; to: 0; dur: 2400; easing: easeOutQuad');
+
+    fadeTo(0, 1400);
+    AudioFX.victoryFanfare();
+
+    setTimeout(function () {
+      const aud = new Audio('02.mp3');
+      aud.volume = 0.85;
+      aud.addEventListener('error', function () {
+        console.warn('No se pudo cargar 02.mp3 (debe estar junto al HTML).');
+      });
+      aud.play().catch(function () {
+        console.warn('No se pudo reproducir 02.mp3 (autoplay bloqueado o archivo ausente).');
+      });
+    }, 1000);
+  }, 900);
+}
+
+/* =====================================================================
+   ARRANQUE FINAL
+   ===================================================================== */
+buildMaze();
+buildSky();
+buildDistantPlanet();
+buildAsteroids();
+buildPanel();
+restart();
+buildIntro();
+buildVictory();
+startIntro();
+setInterval(tickPanel, 60);
+
+// Quitar overlay de carga
+setTimeout(() => {
+  const lo = document.getElementById('loading-overlay');
+  if (lo) { lo.classList.add('hidden'); setTimeout(() => lo.remove(), 1000); }
+}, 800);
+
+// Iniciar audio en cualquier interaccion
+document.addEventListener('click', () => AudioFX.resume(), { once: true });
+document.addEventListener('touchstart', () => AudioFX.resume(), { once: true });
+document.addEventListener('keydown', () => AudioFX.resume(), { once: true });
+
+window.addEventListener('resize', layoutHUD);
+scene.addEventListener('loaded', layoutHUD);
+scene.addEventListener('enter-vr', function () { setTimeout(layoutHUD, 150); });
+scene.addEventListener('exit-vr', function () { setTimeout(layoutHUD, 150); });
+scene.addEventListener('enter-vr', function () {
+  document.getElementById('info').style.display = 'none';
+  AudioFX.resume();
+});
+scene.addEventListener('exit-vr', function () {
+  document.getElementById('info').style.display = '';
+});
+</script>
+</body>
+</html>

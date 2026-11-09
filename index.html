@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CEAM VR - Experiencia de Bienvenida Espacial</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        neonBlue: '#00f2fe',
+                        neonPurple: '#4facfe',
+                        deepSpace: '#040711'
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #040711;
+            color: #ffffff;
+            overflow-x: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        #space-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            display: block;
+            opacity: 0;
+            transition: opacity 2s ease;
+        }
+        body.ready #space-canvas { opacity: 1; }
+
+        .holo-card {
+            background: rgba(10, 15, 30, 0.75);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(0, 242, 254, 0.35);
+            box-shadow: 0 0 30px rgba(0, 242, 254, 0.18), inset 0 0 20px rgba(79, 172, 254, 0.08);
+        }
+        .holo-button-blue {
+            background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+            box-shadow: 0 0 20px rgba(0, 198, 255, 0.4);
+            transition: all 0.3s ease;
+        }
+        .holo-button-blue:hover {
+            box-shadow: 0 0 35px rgba(0, 198, 255, 0.8);
+            transform: translateY(-2px);
+        }
+        .holo-button-purple {
+            background: linear-gradient(135deg, #8a2be2 0%, #4a00e0 100%);
+            box-shadow: 0 0 20px rgba(138, 43, 226, 0.4);
+            transition: all 0.3s ease;
+        }
+        .holo-button-purple:hover {
+            box-shadow: 0 0 35px rgba(138, 43, 226, 0.8);
+            transform: translateY(-2px);
+        }
+        .holo-button-green {
+            background: linear-gradient(135deg, #10b981 0%, #047857 100%);
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+            transition: all 0.3s ease;
+        }
+        .holo-button-green:hover {
+            box-shadow: 0 0 35px rgba(16, 185, 129, 0.8);
+            transform: translateY(-2px);
+        }
+        button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        @keyframes vrPulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(138, 43, 226, 0.4); }
+            50% { box-shadow: 0 0 45px rgba(138, 43, 226, 0.9); }
+        }
+        #vr-gate-btn:not(:disabled) { animation: vrPulse 2.5s ease-in-out infinite; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 md:p-8">
+
+    <canvas id="space-canvas"></canvas>
+
+    <!-- ================= OVERLAY DE ENTRADA VR ================= -->
+    <div id="vr-gate" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-xl transition-opacity duration-1000">
+        <div class="text-center px-6 max-w-lg">
+            <div class="text-7xl mb-6 animate-pulse">🥽</div>
+            <h1 class="text-3xl md:text-4xl font-extrabold mb-3 bg-clip-text text-transparent bg-gradient-to-r from-neonBlue to-neonPurple">
+                CEAM VR Experience
+            </h1>
+            <p class="text-slate-300 text-sm md:text-base mb-8 leading-relaxed">
+                Colócate tus Meta Quest 3 y entra al sistema estelar.<br>
+                <span class="text-xs text-slate-400">La experiencia iniciará automáticamente.</span>
+            </p>
+            <button id="vr-gate-btn" onclick="enterVR()"
+                class="px-8 py-4 rounded-2xl holo-button-purple font-bold text-lg text-white tracking-wide uppercase flex items-center space-x-3 mx-auto disabled:opacity-50 disabled:cursor-not-allowed">
+                <span class="text-2xl">🥽</span><span id="vr-gate-label">Comprobando VR…</span>
+            </button>
+            <button id="screen-mode-btn" onclick="startScreenMode()"
+                class="mt-4 px-6 py-2 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-xs md:text-sm text-slate-300 hover:text-neonBlue border border-slate-600/40 hover:border-neonBlue/40 transition mx-auto">
+                👁️ Ver sin VR (pantalla completa)
+            </button>
+            <p id="vr-gate-hint" class="text-xs text-slate-400 mt-5 max-w-md mx-auto leading-relaxed"></p>
+            <p class="text-[10px] text-slate-600 mt-8 uppercase tracking-widest">CEAM — Tradición de Excelencia</p>
+            <p class="text-[10px] text-slate-500 mt-1">© 2026 César Rajapakse. Todos los derechos reservados.</p>
+        </div>
+    </div>
+
+    <!-- ================= MAIN CONTAINER (fallback pantalla) ================= -->
+    <main class="w-full max-w-4xl mx-auto flex flex-col items-center justify-center flex-grow z-10">
+
+        <!-- Stage 1: Video -->
+        <div id="video-stage" class="w-full flex flex-col items-center transition-all duration-700" style="display:none;">
+            <div class="relative w-full aspect-video rounded-2xl overflow-hidden holo-card border-2 border-neonBlue/40">
+                <video id="intro-video" class="w-full h-full object-cover" poster="https://placehold.co/1280x720/0a0f1d/00f2fe?text=CEAM+Tradicion+de+Excelencia" playsinline preload="auto">
+                    <source src="ceam.mp4" type="video/mp4">
+                    Tu navegador no soporta videos HTML5.
+                </video>
+                <div class="absolute bottom-4 right-4 flex items-center space-x-3">
+                    <button onclick="skipVideo()" class="px-4 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-xs md:text-sm text-neonBlue border border-neonBlue/30 transition backdrop-blur-md">
+                        Saltar introducción →
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stage 2: Dashboard -->
+        <div id="dashboard-stage" class="w-full hidden flex-col items-center text-center opacity-0 transition-all duration-1000 transform scale-95">
+
+            <div class="inline-block mb-3 px-4 py-1.5 rounded-full border border-neonBlue/40 bg-neonBlue/10 text-neonBlue text-xs font-semibold uppercase tracking-widest shadow-lg">
+                Bienvenida Alumnos del CEAM 2026
+            </div>
+
+            <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight mb-4 text-white">
+                ¡Bienvenidos al <span class="text-transparent bg-clip-text bg-gradient-to-r from-neonBlue to-neonPurple">CEAM</span>!
+            </h1>
+
+            <p class="text-slate-200 text-sm md:text-base max-w-2xl mb-8 leading-relaxed">
+                Has ingresado con éxito al sistema estelar. Prepárate para explorar mundos virtuales, resolver retos alucinantes y vivir la excelencia académica en realidad virtual.
+            </p>
+
+            <div class="w-full max-w-xl holo-card p-6 md:p-8 rounded-3xl border border-neonBlue/30 flex flex-col space-y-4">
+                <h2 class="text-lg font-semibold text-neonBlue mb-2">Selecciona tu siguiente destino inmersivo:</h2>
+
+                <button onclick="launchApp('Laberinto')" class="w-full py-4 px-6 rounded-2xl holo-button-green text-white font-bold text-base md:text-lg flex items-center justify-between group">
+                    <div class="flex items-center space-x-3">
+                        <span class="text-2xl">🧩</span>
+                        <div class="text-left">
+                            <div>Entrar al Laberinto VR</div>
+                            <div class="text-xs font-normal text-slate-100/90">Juego interactivo de laberinto inmersivo</div>
+                        </div>
+                    </div>
+                    <svg class="w-5 h-5 transform group-hover:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+
+                <button onclick="launchApp('First Encounters')" class="w-full py-4 px-6 rounded-2xl holo-button-blue text-white font-bold text-base md:text-lg flex items-center justify-between group">
+                    <div class="flex items-center space-x-3">
+                        <span class="text-2xl">🚀</span>
+                        <div class="text-left">
+                            <div>Iniciar First Encounters</div>
+                            <div class="text-xs font-normal text-slate-100/90">Exploración interactiva de realidad mixta</div>
+                        </div>
+                    </div>
+                    <svg class="w-5 h-5 transform group-hover:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+
+                <button onclick="launchApp('Theater Elsewhere')" class="w-full py-4 px-6 rounded-2xl holo-button-purple text-white font-bold text-base md:text-lg flex items-center justify-between group">
+                    <div class="flex items-center space-x-3">
+                        <span class="text-2xl">🎬</span>
+                        <div class="text-left">
+                            <div>Abrir Theater Elsewhere</div>
+                            <div class="text-xs font-normal text-slate-100/90">Experiencia cinematográfica inmersiva</div>
+                        </div>
+                    </div>
+                    <svg class="w-5 h-5 transform group-hover:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+
+            <button onclick="replayVideo()" class="mt-6 text-xs text-slate-300 hover:text-neonBlue underline transition">
+                Volver a ver la introducción
+            </button>
+        </div>
+
+    </main>
+
+    <!-- Modal -->
+    <div id="custom-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="holo-card p-6 md:p-8 rounded-3xl max-w-md w-full border border-neonBlue text-center">
+            <div id="modal-icon" class="text-4xl mb-3">✨</div>
+            <h3 id="modal-title" class="text-xl font-bold text-white mb-2">Activando Aplicación</h3>
+            <p id="modal-message" class="text-slate-200 text-sm mb-6">Preparando entorno virtual en tus Meta Quest 3...</p>
+            <button onclick="closeModal()" class="w-full py-3 rounded-xl holo-button-blue text-white font-bold text-sm">
+                Entendido
+            </button>
+        </div>
+    </div>
+
+    <footer class="absolute bottom-4 text-center text-xs text-slate-400 z-10">
+        CEAM — Tradición de Excelencia... Ahora, en Realidad Virtual<br>
+        <span class="text-slate-500">© 2026 César Rajapakse. Todos los derechos reservados.</span>
+    </footer>
+
+    <!-- ===================================================================
+         MOTOR 3D + SONIDO ESPACIAL + FLUJO CINEMATOGRÁFICO
+         =================================================================== -->
+    <script>
+    (() => {
+        'use strict';
+
+        const rand = (a, b) => a + Math.random() * (b - a);
+        const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+        const TAU = Math.PI * 2;
+        const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        const HEAD_Y = 1.6;
+        const headRef = new THREE.Vector3(0, HEAD_Y, 0);
+
+        /* ===============================================================
+           AUDIO ESPACIAL (Web Audio API - todo sintetizado)
+        =============================================================== */
+        const AudioFX = (() => {
+            let ctx = null;
+            let master = null;
+            let ambientNodes = null;
+
+            function ensureCtx() {
+                if (ctx) return ctx;
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (!AC) return null;
+                ctx = new AC();
+                master = ctx.createGain();
+                master.gain.value = 0.6;
+                master.connect(ctx.destination);
+                return ctx;
+            }
+
+            async function resume() {
+                ensureCtx();
+                if (ctx && ctx.state === 'suspended') {
+                    try { await ctx.resume(); } catch (e) {}
+                }
+            }
+
+            function startAmbient() {
+                ensureCtx();
+                if (!ctx || ambientNodes) return;
+                const now = ctx.currentTime;
+
+                const drone = ctx.createGain();
+                drone.gain.value = 0;
+                drone.gain.linearRampToValueAtTime(0.05, now + 4);
+                drone.connect(master);
+
+                const freqs = [55, 82.5, 110, 164.8];
+                const oscs = freqs.map((f, i) => {
+                    const o = ctx.createOscillator();
+                    o.type = i < 2 ? 'sine' : 'triangle';
+                    o.frequency.value = f;
+                    const g = ctx.createGain();
+                    g.gain.value = i < 2 ? 0.35 : 0.12;
+                    o.connect(g).connect(drone);
+                    const lfo = ctx.createOscillator();
+                    lfo.frequency.value = 0.05 + i * 0.03;
+                    const lfoGain = ctx.createGain();
+                    lfoGain.gain.value = f * 0.004;
+                    lfo.connect(lfoGain).connect(o.frequency);
+                    o.start(now); lfo.start(now);
+                    return { o, lfo };
+                });
+
+                const lp = ctx.createBiquadFilter();
+                lp.type = 'lowpass';
+                lp.frequency.value = 700;
+                lp.Q.value = 0.5;
+                drone.disconnect();
+                drone.connect(lp).connect(master);
+
+                const bufSize = ctx.sampleRate * 2;
+                const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+                const data = buf.getChannelData(0);
+                for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+                const noise = ctx.createBufferSource();
+                noise.buffer = buf; noise.loop = true;
+                const nFilt = ctx.createBiquadFilter();
+                nFilt.type = 'bandpass';
+                nFilt.frequency.value = 3200;
+                nFilt.Q.value = 8;
+                const nGain = ctx.createGain();
+                nGain.gain.value = 0.008;
+                noise.connect(nFilt).connect(nGain).connect(master);
+                noise.start(now);
+
+                ambientNodes = { drone, oscs, noise, nGain, lp };
+            }
+
+            function stopAmbient(fade = 2) {
+                if (!ambientNodes || !ctx) return;
+                const now = ctx.currentTime;
+                ambientNodes.drone.gain.cancelScheduledValues(now);
+                ambientNodes.drone.gain.setValueAtTime(ambientNodes.drone.gain.value, now);
+                ambientNodes.drone.gain.linearRampToValueAtTime(0, now + fade);
+                ambientNodes.nGain.gain.cancelScheduledValues(now);
+                ambientNodes.nGain.gain.setValueAtTime(ambientNodes.nGain.gain.value, now);
+                ambientNodes.nGain.gain.linearRampToValueAtTime(0, now + fade);
+                const nodesToStop = ambientNodes;
+                setTimeout(() => {
+                    try {
+                        nodesToStop.oscs.forEach(({ o, lfo }) => { o.stop(); lfo.stop(); });
+                        nodesToStop.noise.stop();
+                    } catch (e) {}
+                }, (fade + 0.5) * 1000);
+                ambientNodes = null;
+            }
+
+            function whooshCollapse() {
+                ensureCtx(); if (!ctx) return;
+                const now = ctx.currentTime;
+                const o = ctx.createOscillator();
+                o.type = 'sawtooth';
+                o.frequency.setValueAtTime(900, now);
+                o.frequency.exponentialRampToValueAtTime(80, now + 1.1);
+                const g = ctx.createGain();
+                g.gain.setValueAtTime(0.0001, now);
+                g.gain.exponentialRampToValueAtTime(0.25, now + 0.08);
+                g.gain.exponentialRampToValueAtTime(0.0001, now + 1.1);
+                const lp = ctx.createBiquadFilter();
+                lp.type = 'lowpass';
+                lp.frequency.setValueAtTime(2200, now);
+                lp.frequency.exponentialRampToValueAtTime(300, now + 1.1);
+                o.connect(lp).connect(g).connect(master);
+                o.start(now); o.stop(now + 1.2);
+
+                const bufSize = Math.floor(ctx.sampleRate * 0.6);
+                const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < bufSize; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 3);
+                const n = ctx.createBufferSource(); n.buffer = buf;
+                const nf = ctx.createBiquadFilter(); nf.type = 'highpass'; nf.frequency.value = 1200;
+                const ng = ctx.createGain(); ng.gain.value = 0.35;
+                n.connect(nf).connect(ng).connect(master);
+                n.start(now);
+            }
+
+            function menuReveal() {
+                ensureCtx(); if (!ctx) return;
+                const now = ctx.currentTime;
+                const notes = [523.25, 659.25, 783.99, 1046.5];
+                notes.forEach((f, i) => {
+                    const t = now + i * 0.12;
+                    const o = ctx.createOscillator();
+                    o.type = 'sine';
+                    o.frequency.value = f;
+                    const g = ctx.createGain();
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+                    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4000;
+                    o.connect(lp).connect(g).connect(master);
+                    o.start(t); o.stop(t + 1.3);
+                });
+                const bufSize = Math.floor(ctx.sampleRate * 1.5);
+                const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < bufSize; i++) d[i] = (Math.random() * 2 - 1) * Math.sin(i / bufSize * Math.PI);
+                const n = ctx.createBufferSource(); n.buffer = buf;
+                const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 5000; nf.Q.value = 3;
+                const ng = ctx.createGain(); ng.gain.setValueAtTime(0.0001, now);
+                ng.gain.exponentialRampToValueAtTime(0.06, now + 0.4);
+                ng.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+                n.connect(nf).connect(ng).connect(master);
+                n.start(now);
+            }
+
+            function blip(freq = 880, dur = 0.06, vol = 0.08) {
+                ensureCtx(); if (!ctx) return;
+                const now = ctx.currentTime;
+                const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+                const g = ctx.createGain();
+                g.gain.setValueAtTime(0.0001, now);
+                g.gain.exponentialRampToValueAtTime(vol, now + 0.01);
+                g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+                o.connect(g).connect(master);
+                o.start(now); o.stop(now + dur + 0.02);
+            }
+
+            return { ensureCtx, resume, startAmbient, stopAmbient, whooshCollapse, menuReveal, blip };
+        })();
+        window.AudioFX = AudioFX;
+
+        /* ===============================================================
+           Renderer / Escena / Cámara
+        =============================================================== */
+        const canvas = document.getElementById('space-canvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+        const DPR = Math.min(window.devicePixelRatio || 1, 2);
+        renderer.setPixelRatio(DPR);
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+        renderer.xr.enabled = true;
+        renderer.xr.setReferenceSpaceType('local-floor');
+        if (typeof renderer.xr.setFoveation === 'function') renderer.xr.setFoveation(0.5);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x02040c);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 2000);
+        camera.position.copy(headRef);
+
+        scene.add(new THREE.AmbientLight(0x3a4a78, 0.9));
+        const keyLight = new THREE.DirectionalLight(0xbfd8ff, 1.5);
+        keyLight.position.set(-3, 4, 2); scene.add(keyLight);
+        const rimLight = new THREE.DirectionalLight(0x9b5cff, 0.9);
+        rimLight.position.set(4, -1, -3); scene.add(rimLight);
+
+        /* Helpers canvas */
+        function makeCanvas(w, h) {
+            const c = document.createElement('canvas');
+            c.width = Math.max(2, Math.round(w));
+            c.height = Math.max(2, Math.round(h));
+            return c;
+        }
+        function glowTexture() {
+            const c = makeCanvas(128, 128), g = c.getContext('2d');
+            const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+            gr.addColorStop(0, 'rgba(255,255,255,1)');
+            gr.addColorStop(0.25, 'rgba(255,255,255,0.45)');
+            gr.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+            return new THREE.CanvasTexture(c);
+        }
+        const glowTex = glowTexture();
+
+        /* Cielo */
+        function makeSkyTexture() {
+            const W = 2048, H = 1024;
+            const c = makeCanvas(W, H), g = c.getContext('2d');
+            g.fillStyle = '#02040c'; g.fillRect(0, 0, W, H);
+            g.globalCompositeOperation = 'lighter';
+            const blob = (x, y, r, rgb, a) => {
+                const draw = px => {
+                    const gr = g.createRadialGradient(px, y, 0, px, y, r);
+                    gr.addColorStop(0, `rgba(${rgb},${a})`);
+                    gr.addColorStop(1, `rgba(${rgb},0)`);
+                    g.fillStyle = gr; g.fillRect(px - r, y - r, r * 2, r * 2);
+                };
+                draw(x);
+                if (x < r) draw(x + W);
+                if (x > W - r) draw(x - W);
+            };
+            for (let i = 0; i < 800; i++) {
+                const x = Math.random() * W;
+                const y = H * 0.5 + Math.sin(x / W * TAU) * H * 0.16 + (Math.random() + Math.random() + Math.random() - 1.5) * H * 0.10;
+                blob(x, y, rand(20, 95), pick(['40,70,160', '90,50,170', '30,110,180', '150,70,150']), rand(0.015, 0.05));
+            }
+            const nebCols = ['0,160,255', '140,60,255', '255,80,170', '0,220,200'];
+            for (let i = 0; i < 8; i++) {
+                const x = Math.random() * W, y = rand(H * 0.18, H * 0.82), col = pick(nebCols);
+                for (let k = 0; k < 14; k++) blob(x + rand(-150, 150), y + rand(-70, 70), rand(70, 200), col, rand(0.03, 0.08));
+            }
+            for (let i = 0; i < 3500; i++) {
+                g.fillStyle = `rgba(255,255,255,${rand(0.08, 0.55)})`;
+                g.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+            }
+            const tex = new THREE.CanvasTexture(c);
+            tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+            return tex;
+        }
+        const sky = new THREE.Mesh(
+            new THREE.SphereGeometry(900, 48, 32),
+            new THREE.MeshBasicMaterial({ map: makeSkyTexture(), side: THREE.BackSide, depthWrite: false })
+        );
+        sky.position.copy(headRef); sky.renderOrder = -100; scene.add(sky);
+
+        /* Estrellas */
+        const uTime = { value: 0 };
+        const uScale = { value: DPR };
+        const starVert = `
+            uniform float uTime, uScale, uAtten, uDrift, uWrap, uFade;
+            attribute float aSize, aPhase, aSpeed, aSpark;
+            attribute vec3 aColor;
+            varying vec3 vColor;
+            varying float vTw, vSpark, vFade;
+            void main() {
+                vec3 p = position;
+                p.z = mod(p.z + uTime * uDrift + uWrap, 2.0 * uWrap) - uWrap;
+                vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                float dist = length(mv.xyz);
+                float tw = 0.5 + 0.5 * sin(uTime * aSpeed + aPhase);
+                float fl = pow(max(0.0, sin(uTime * aSpeed * 0.43 + aPhase * 5.1)), 30.0);
+                vTw = 0.35 + 0.65 * tw + fl * 1.6;
+                vSpark = aSpark;
+                vColor = aColor;
+                float att = uAtten > 0.0 ? uAtten / max(dist, 1.5) : 1.0;
+                gl_PointSize = clamp(aSize * uScale * att * (0.8 + 0.5 * tw + fl * 0.8), 1.0, 40.0 * uScale);
+                float edge = (1.0 - smoothstep(0.7 * uWrap, uWrap, abs(p.z))) * smoothstep(0.6, 4.0, dist);
+                vFade = mix(1.0, edge, uFade);
+                gl_Position = projectionMatrix * mv;
+            }`;
+        const starFrag = `
+            varying vec3 vColor;
+            varying float vTw, vSpark, vFade;
+            void main() {
+                vec2 p = gl_PointCoord - 0.5;
+                float d = length(p);
+                if (d > 0.5) discard;
+                float halo = exp(-d * d * 42.0);
+                float spike = exp(-abs(p.x) * 60.0) * exp(-abs(p.y) * 7.0)
+                            + exp(-abs(p.y) * 60.0) * exp(-abs(p.x) * 7.0);
+                float I = halo * 0.95 + spike * vSpark * vTw * 1.3;
+                gl_FragColor = vec4(vColor * (0.6 + 0.8 * vTw), clamp(I, 0.0, 1.0) * vFade);
+            }`;
+        const starPalette = [[1, 1, 1], [1, 1, 1], [0.72, 0.84, 1], [0.6, 0.78, 1], [1, 0.92, 0.75], [1, 0.8, 0.8]];
+        function makeStarLayer(o) {
+            const n = o.count;
+            const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+            const siz = new Float32Array(n), ph = new Float32Array(n), sp = new Float32Array(n), sk = new Float32Array(n);
+            for (let i = 0; i < n; i++) {
+                if (o.shell) {
+                    const u = Math.random() * 2 - 1, t = Math.random() * TAU, s = Math.sqrt(1 - u * u), r = rand(o.shell[0], o.shell[1]);
+                    pos.set([s * Math.cos(t) * r, u * r, s * Math.sin(t) * r], i * 3);
+                } else {
+                    pos.set([rand(-o.box[0], o.box[0]), rand(-o.box[1], o.box[1]), rand(-o.box[2], o.box[2])], i * 3);
+                }
+                col.set(pick(starPalette), i * 3);
+                const spark = Math.random() < o.spark ? 1 : 0;
+                sk[i] = spark;
+                siz[i] = (o.size[0] + Math.pow(Math.random(), 3) * (o.size[1] - o.size[0])) * (spark ? 1.9 : 1);
+                ph[i] = rand(0, TAU);
+                sp[i] = rand(0.6, 3.2);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+            geo.setAttribute('aSize', new THREE.BufferAttribute(siz, 1));
+            geo.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+            geo.setAttribute('aSpeed', new THREE.BufferAttribute(sp, 1));
+            geo.setAttribute('aSpark', new THREE.BufferAttribute(sk, 1));
+            const mat = new THREE.ShaderMaterial({
+                vertexShader: starVert, fragmentShader: starFrag,
+                uniforms: {
+                    uTime, uScale,
+                    uAtten: { value: o.atten || 0 },
+                    uDrift: { value: reducedMotion ? 0 : (o.drift || 0) },
+                    uWrap: { value: o.wrap || 1000 },
+                    uFade: { value: o.fade ? 1 : 0 }
+                },
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+            const pts = new THREE.Points(geo, mat);
+            pts.frustumCulled = false; pts.renderOrder = 1; pts.position.copy(headRef);
+            scene.add(pts); return pts;
+        }
+        const starsFar  = makeStarLayer({ count: 4500, shell: [450, 700], size: [1.4, 4.2], spark: 0.05 });
+        const starsMid  = makeStarLayer({ count: 2000, box: [90, 90, 100], wrap: 100, fade: true, atten: 45, drift: 1.2, size: [1.6, 6], spark: 0.08 });
+        const starsNear = makeStarLayer({ count: 260,  box: [9, 6, 10],   wrap: 10,  fade: true, atten: 8,  drift: 0.35, size: [0.9, 2.8], spark: 0.1 });
+
+        /* Planetas */
+        function planetTexture(stops) {
+            const c = makeCanvas(512, 256), g = c.getContext('2d');
+            const gr = g.createLinearGradient(0, 0, 0, 256);
+            stops.forEach((col, i) => gr.addColorStop(i / (stops.length - 1), col));
+            g.fillStyle = gr; g.fillRect(0, 0, 512, 256);
+            for (let i = 0; i < 340; i++) {
+                const x = Math.random() * 512, y = Math.random() * 256, rx = rand(30, 120), ry = rand(1.5, 8);
+                g.fillStyle = Math.random() < 0.5 ? `rgba(255,255,255,${rand(0.02, 0.07)})` : `rgba(0,0,20,${rand(0.04, 0.12)})`;
+                [-512, 0, 512].forEach(off => { g.beginPath(); g.ellipse(x + off, y, rx, ry, 0, 0, TAU); g.fill(); });
+            }
+            return new THREE.CanvasTexture(c);
+        }
+        const atmoVert = `varying vec3 vN; void main(){ vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
+        const atmoFrag = `varying vec3 vN; uniform vec3 uColor; void main(){ float i = pow(max(0.0, 0.55 - dot(vN, vec3(0.0,0.0,1.0))), 3.0); gl_FragColor = vec4(uColor, 1.0) * i * 2.2; }`;
+        const planets = [];
+        function makePlanet({ pos, r, stops, glow, ring, spin, moon }) {
+            const group = new THREE.Group();
+            group.position.copy(pos);
+            const body = new THREE.Mesh(
+                new THREE.SphereGeometry(r, 48, 32),
+                new THREE.MeshStandardMaterial({ map: planetTexture(stops), roughness: 0.9, metalness: 0 })
+            );
+            group.add(body);
+            group.add(new THREE.Mesh(
+                new THREE.SphereGeometry(r * 1.16, 48, 32),
+                new THREE.ShaderMaterial({
+                    vertexShader: atmoVert, fragmentShader: atmoFrag,
+                    uniforms: { uColor: { value: new THREE.Color(glow[0], glow[1], glow[2]) } },
+                    side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false
+                })
+            ));
+            if (ring) {
+                const rg = new THREE.Group();
+                [[1.5, 2.0, 0.38], [2.1, 2.35, 0.22]].forEach(([a, b, op]) => {
+                    rg.add(new THREE.Mesh(
+                        new THREE.RingGeometry(r * a, r * b, 96),
+                        new THREE.MeshBasicMaterial({ color: 0xc7b2ff, side: THREE.DoubleSide, transparent: true, opacity: op, depthWrite: false })
+                    ));
+                });
+                rg.rotation.x = Math.PI / 2.25; rg.rotation.y = 0.35;
+                group.add(rg);
+            }
+            let moonPivot = null;
+            if (moon) {
+                moonPivot = new THREE.Group();
+                const mm = new THREE.Mesh(new THREE.SphereGeometry(r * 0.22, 24, 16),
+                    new THREE.MeshStandardMaterial({ color: 0xbfc4d4, roughness: 1 }));
+                mm.position.set(r * 2.1, r * 0.2, 0);
+                moonPivot.add(mm); group.add(moonPivot);
+            }
+            scene.add(group);
+            planets.push({ group, body, spin, moonPivot });
+        }
+        makePlanet({ pos: new THREE.Vector3(-62, 34, -130), r: 15, glow: [0.15, 0.65, 1.0], spin: 0.02, moon: true,
+            stops: ['#0b3a6b', '#1b86d6', '#0f5aa6', '#7fd7ff', '#0b3a6b'] });
+        makePlanet({ pos: new THREE.Vector3(78, -20, -175), r: 26, glow: [0.6, 0.3, 1.0], spin: 0.012, ring: true,
+            stops: ['#2a0a5e', '#7b2ff0', '#4a1d9c', '#c58bff', '#2a0a5e'] });
+        makePlanet({ pos: new THREE.Vector3(30, 52, 140), r: 8, glow: [1.0, 0.5, 0.2], spin: 0.03,
+            stops: ['#4a1308', '#d9531e', '#8a2a0e', '#ffb27a', '#4a1308'] });
+
+        /* Meteoritos */
+        function rockTexture() {
+            const c = makeCanvas(256, 256), g = c.getContext('2d');
+            g.fillStyle = '#8a8d96'; g.fillRect(0, 0, 256, 256);
+            for (let i = 0; i < 2600; i++) {
+                const v = Math.floor(rand(55, 175));
+                g.fillStyle = `rgba(${v},${v},${v + 8},${rand(0.2, 0.7)})`;
+                g.fillRect(Math.random() * 256, Math.random() * 256, rand(1, 3.5), rand(1, 3.5));
+            }
+            for (let i = 0; i < 16; i++) {
+                const x = Math.random() * 256, y = Math.random() * 256, r = rand(8, 28);
+                const gr = g.createRadialGradient(x, y, 0, x, y, r);
+                gr.addColorStop(0, 'rgba(20,20,28,0.55)'); gr.addColorStop(0.8, 'rgba(20,20,28,0.15)'); gr.addColorStop(1, 'rgba(210,214,225,0.25)');
+                g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+            }
+            const t = new THREE.CanvasTexture(c);
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            return t;
+        }
+        const rockMat = new THREE.MeshStandardMaterial({ map: rockTexture(), color: 0xc4c8d4, roughness: 1, metalness: 0, flatShading: true, emissive: 0x0a0d18 });
+        function rockGeometry() {
+            const g = new THREE.IcosahedronGeometry(1, 2);
+            const pos = g.attributes.position, v = new THREE.Vector3();
+            const f1 = rand(1.5, 3), f2 = rand(3, 6), ph = [rand(0, 10), rand(0, 10), rand(0, 10)];
+            for (let i = 0; i < pos.count; i++) {
+                v.fromBufferAttribute(pos, i).normalize();
+                const n = 1 + 0.22 * Math.sin(v.x * f1 * 3 + ph[0]) * Math.cos(v.y * f1 * 3 + ph[1])
+                            + 0.12 * Math.sin(v.z * f2 * 3 + ph[2]) + 0.06 * Math.sin((v.x + v.y) * f2 * 5);
+                v.multiplyScalar(n);
+                pos.setXYZ(i, v.x, v.y, v.z);
+            }
+            g.computeVertexNormals();
+            return g;
+        }
+        const rockGeos = [rockGeometry(), rockGeometry(), rockGeometry(), rockGeometry()];
+
+        const tailGeo = new THREE.ConeGeometry(1, 1, 14, 1, true);
+        tailGeo.translate(0, 0.5, 0);
+        {
+            const p = tailGeo.attributes.position, cols = [];
+            for (let i = 0; i < p.count; i++) { const k = 1 - p.getY(i); cols.push(k, k, k); }
+            tailGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+        }
+        const tailMat = (color, opacity) => new THREE.MeshBasicMaterial({
+            color, vertexColors: true, transparent: true, opacity,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+        });
+        const tailStyles = [
+            { outer: tailMat(0xff7a2e, 0.55), inner: tailMat(0xfff1d6, 0.85), glow: 0xff9a55 },
+            { outer: tailMat(0x35b8ff, 0.55), inner: tailMat(0xe6faff, 0.85), glow: 0x66ccff }
+        ];
+        const Y_AXIS = new THREE.Vector3(0, 1, 0);
+        const meteorHead = new THREE.Vector3().copy(headRef);
+
+        class Meteor {
+            constructor() {
+                this.group = new THREE.Group();
+                this.rock = new THREE.Mesh(pick(rockGeos), rockMat);
+                this.tail = new THREE.Group();
+                this.glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+                this.glow.renderOrder = 6;
+                this.group.add(this.rock, this.tail, this.glow);
+                scene.add(this.group);
+                this.vel = new THREE.Vector3();
+                this.dirN = new THREE.Vector3();
+                this.pos = new THREE.Vector3();
+                this.spin = new THREE.Vector3();
+                this.respawn(true);
+            }
+            respawn(initial) {
+                const vr = renderer.xr.isPresenting;
+                const size = rand(0.25, 1.1) * (Math.random() < 0.15 ? 1.8 : 1);
+                let dir;
+                if (vr) {
+                    const az = (Math.random() < 0.5 ? 1 : -1) * rand(0.8, 3.0), el = rand(-0.25, 0.55);
+                    dir = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+                } else {
+                    dir = new THREE.Vector3(rand(-0.9, 0.9), rand(-0.5, 0.7), -1).normalize();
+                }
+                const R = rand(110, 190);
+                const spawn = meteorHead.clone().addScaledVector(dir, R);
+                const ref = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : Y_AXIS;
+                const side = new THREE.Vector3().crossVectors(dir, ref).normalize();
+                const up2 = new THREE.Vector3().crossVectors(side, dir).normalize();
+                const off = rand(size * 1.2 + 0.5, 3.8), ang = rand(0, TAU);
+                const target = meteorHead.clone().addScaledVector(side, Math.cos(ang) * off).addScaledVector(up2, Math.sin(ang) * off);
+                const speed = rand(9, 24);
+                this.dirN.copy(target).sub(spawn).normalize();
+                this.vel.copy(this.dirN).multiplyScalar(speed);
+                this.pos.copy(spawn);
+                if (initial) this.pos.addScaledVector(this.vel, rand(0, R / speed));
+                this.size = size;
+                this.rock.geometry = pick(rockGeos);
+                this.rock.scale.set(size * rand(0.8, 1.2), size * rand(0.7, 1.0), size * rand(0.8, 1.2));
+                this.spin.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(rand(0.3, 1.2));
+                while (this.tail.children.length) this.tail.remove(this.tail.children[0]);
+                const style = pick(tailStyles);
+                const L = size * rand(10, 18) + speed * 0.4;
+                const outer = new THREE.Mesh(tailGeo, style.outer), inner = new THREE.Mesh(tailGeo, style.inner);
+                outer.scale.set(size * 1.1, L, size * 1.1);
+                inner.scale.set(size * 0.5, L * 0.6, size * 0.5);
+                outer.renderOrder = inner.renderOrder = 5;
+                this.tail.add(outer, inner);
+                this.tail.quaternion.setFromUnitVectors(Y_AXIS, this.dirN.clone().negate());
+                this.glow.material.color.setHex(style.glow);
+                this.group.position.copy(this.pos);
+            }
+            update(dt) {
+                this.pos.addScaledVector(this.vel, dt);
+                this.group.position.copy(this.pos);
+                this.rock.rotation.x += this.spin.x * dt;
+                this.rock.rotation.y += this.spin.y * dt;
+                this.rock.rotation.z += this.spin.z * dt;
+                const dx = this.pos.x - meteorHead.x, dy = this.pos.y - meteorHead.y, dz = this.pos.z - meteorHead.z;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                this.glow.scale.setScalar(this.size * 5 + dist * 0.03);
+                if (dx * this.dirN.x + dy * this.dirN.y + dz * this.dirN.z > 45) this.respawn(false);
+            }
+        }
+        const meteors = [];
+        const METEOR_COUNT = reducedMotion ? 3 : 8;
+        for (let i = 0; i < METEOR_COUNT; i++) meteors.push(new Meteor());
+
+        const bigRocks = [];
+        for (let i = 0; i < 5; i++) {
+            const m = new THREE.Mesh(pick(rockGeos), rockMat);
+            const s = rand(5, 13);
+            m.scale.set(s * rand(0.8, 1.2), s * rand(0.7, 1), s * rand(0.8, 1.2));
+            const az = rand(0, TAU), el = rand(-0.4, 0.6), R = rand(70, 140);
+            m.position.set(Math.sin(az) * Math.cos(el) * R, HEAD_Y + Math.sin(el) * R, -Math.cos(az) * Math.cos(el) * R);
+            scene.add(m);
+            bigRocks.push({
+                mesh: m,
+                vel: new THREE.Vector3(rand(-1, 1), rand(-0.3, 0.3), rand(-1, 1)).normalize().multiplyScalar(rand(0.4, 1.4)),
+                spin: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(0.12)
+            });
+        }
+
+        /* ===============================================================
+           UI 3D EN VR
+        =============================================================== */
+        const PPM = 560, PAD = 28;
+        const FONT = 'Inter, "Segoe UI", system-ui, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+
+        function rr(g, x, y, w, h, r) {
+            g.beginPath();
+            g.moveTo(x + r, y);
+            g.arcTo(x + w, y, x + w, y + h, r);
+            g.arcTo(x + w, y + h, x, y + h, r);
+            g.arcTo(x, y + h, x, y, r);
+            g.arcTo(x, y, x + w, y, r);
+            g.closePath();
+        }
+        function wrapText(g, text, maxW) {
+            const words = text.split(' '), lines = [];
+            let line = '';
+            words.forEach(w => {
+                const t = line ? line + ' ' + w : w;
+                if (g.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+            });
+            if (line) lines.push(line);
+            return lines;
+        }
+        const setSpacing = (g, px) => { if ('letterSpacing' in g) g.letterSpacing = px + 'px'; };
+
+        const allPanels = [];
+        class Panel {
+            constructor(wM, hM, draw, o = {}) {
+                this.ppm = o.ppm || PPM;
+                this.pad = o.pad === undefined ? PAD : o.pad;
+                this.canvas = makeCanvas(wM * this.ppm + this.pad * 2, hM * this.ppm + this.pad * 2);
+                this.ctx = this.canvas.getContext('2d');
+                this.rect = { x: this.pad, y: this.pad, w: wM * this.ppm, h: hM * this.ppm };
+                this.draw = draw;
+                this.arg = undefined;
+                this.tex = new THREE.CanvasTexture(this.canvas);
+                this.tex.minFilter = THREE.LinearFilter; this.tex.generateMipmaps = false;
+                this.tex.anisotropy = 4;
+                this.mesh = new THREE.Mesh(
+                    new THREE.PlaneGeometry(this.canvas.width / this.ppm, this.canvas.height / this.ppm),
+                    new THREE.MeshBasicMaterial({ map: this.tex, transparent: o.transparent !== false, depthWrite: false, toneMapped: false })
+                );
+                this.mesh.renderOrder = o.order || 10;
+                this.mesh.userData.panel = this;
+                allPanels.push(this);
+                this.redraw();
+            }
+            redraw(arg) {
+                if (arg !== undefined) this.arg = arg;
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.draw(this.ctx, this.rect, this.arg);
+                this.tex.needsUpdate = true;
+            }
+        }
+        function holoCard(g, r, border) {
+            g.save();
+            g.shadowColor = 'rgba(0,242,254,0.55)'; g.shadowBlur = 40;
+            g.fillStyle = 'rgba(8,14,32,0.88)';
+            rr(g, r.x, r.y, r.w, r.h, 46); g.fill();
+            g.restore();
+            const gr = g.createLinearGradient(0, r.y, 0, r.y + r.h);
+            gr.addColorStop(0, 'rgba(79,172,254,0.14)'); gr.addColorStop(1, 'rgba(79,172,254,0)');
+            g.fillStyle = gr; rr(g, r.x, r.y, r.w, r.h, 46); g.fill();
+            g.lineWidth = 4; g.strokeStyle = border || 'rgba(0,242,254,0.55)';
+            rr(g, r.x, r.y, r.w, r.h, 46); g.stroke();
+        }
+
+        const allButtons = [];
+        function makeButton(o) {
+            const b = { hover: false, press: 0, scaleNow: 1, onClick: o.onClick, modal: !!o.modal };
+            const draw = (g, r) => {
+                const hover = b.hover;
+                if (o.kind === 'link') {
+                    if (hover) { g.fillStyle = 'rgba(0,242,254,0.14)'; rr(g, r.x, r.y, r.w, r.h, r.h * 0.4); g.fill(); }
+                    g.fillStyle = hover ? '#00f2fe' : '#cbd5e1';
+                    g.font = `400 ${r.h * 0.42}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+                    g.fillText(o.title, r.x + r.w / 2, r.y + r.h / 2);
+                    const tw = g.measureText(o.title).width;
+                    g.fillRect(r.x + r.w / 2 - tw / 2, r.y + r.h / 2 + r.h * 0.26, tw, 3);
+                    return;
+                }
+                g.save();
+                g.shadowColor = o.glow; g.shadowBlur = hover ? 46 : 24;
+                if (o.solid) g.fillStyle = o.c1;
+                else { const gr = g.createLinearGradient(r.x, r.y, r.x + r.w, r.y + r.h); gr.addColorStop(0, o.c1); gr.addColorStop(1, o.c2); g.fillStyle = gr; }
+                rr(g, r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
+                g.restore();
+                if (o.solid || hover) {
+                    g.lineWidth = hover ? 5 : 3;
+                    g.strokeStyle = hover ? 'rgba(255,255,255,0.9)' : o.glow;
+                    rr(g, r.x, r.y, r.w, r.h, r.h * 0.3); g.stroke();
+                }
+                g.fillStyle = '#fff'; g.textBaseline = 'middle';
+                if (o.kind === 'full') {
+                    g.textAlign = 'center'; g.font = `${r.h * 0.46}px ${FONT}`;
+                    g.fillText(o.icon, r.x + r.h * 0.62, r.y + r.h * 0.52);
+                    g.textAlign = 'left';
+                    g.font = `700 ${r.h * 0.27}px ${FONT}`;
+                    g.fillText(o.title, r.x + r.h * 1.15, r.y + r.h * 0.38);
+                    g.font = `400 ${r.h * 0.17}px ${FONT}`; g.fillStyle = 'rgba(255,255,255,0.88)';
+                    g.fillText(o.sub, r.x + r.h * 1.15, r.y + r.h * 0.68);
+                    const cx = r.x + r.w - r.h * 0.55, cy = r.y + r.h / 2, s = r.h * 0.12;
+                    g.strokeStyle = '#fff'; g.lineWidth = 6; g.lineCap = 'round'; g.lineJoin = 'round';
+                    g.beginPath(); g.moveTo(cx - s * 0.5, cy - s); g.lineTo(cx + s * 0.7, cy); g.lineTo(cx - s * 0.5, cy + s); g.stroke();
+                } else {
+                    g.textAlign = 'center';
+                    g.font = `700 ${r.h * (o.fontScale || 0.34)}px ${FONT}`;
+                    let tx = r.x + r.w / 2;
+                    if (o.playIcon) {
+                        const tw = g.measureText(o.title).width, s = r.h * 0.2, gap = r.h * 0.3;
+                        const total = s * 1.6 + gap + tw, x0 = r.x + r.w / 2 - total / 2;
+                        g.beginPath(); g.moveTo(x0, r.y + r.h / 2 - s); g.lineTo(x0 + s * 1.6, r.y + r.h / 2); g.lineTo(x0, r.y + r.h / 2 + s); g.closePath(); g.fill();
+                        g.textAlign = 'left'; tx = x0 + s * 1.6 + gap;
+                    }
+                    g.fillText(o.title, tx, r.y + r.h / 2 + 2);
+                }
+            };
+            b.panel = new Panel(o.w, o.h, draw, { order: o.order || 12 });
+            b.mesh = b.panel.mesh;
+            b.mesh.userData.button = b;
+            b.setHover = h => { if (h !== b.hover) { b.hover = h; b.panel.redraw(); if (h) AudioFX.blip(1200, 0.04, 0.05); } };
+            allButtons.push(b);
+            return b;
+        }
+        const put = (obj, parent, x, y, z) => { obj.mesh.position.set(x, y, z); parent.add(obj.mesh); return obj; };
+
+        const uiRoot = new THREE.Group();
+        uiRoot.visible = false;
+        scene.add(uiRoot);
+
+        /* ---- Escena 1: video ---- */
+        const videoGroup = new THREE.Group();
+        videoGroup.position.set(0, 1.55, -2.6);
+        uiRoot.add(videoGroup);
+
+        const videoEl = document.getElementById('intro-video');
+        const videoTex = new THREE.VideoTexture(videoEl);
+        videoTex.minFilter = THREE.LinearFilter; videoTex.magFilter = THREE.LinearFilter; videoTex.generateMipmaps = false;
+        const videoMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.8), new THREE.MeshBasicMaterial({ map: videoTex, toneMapped: false }));
+        videoGroup.add(videoMesh);
+
+        const frame = new Panel(3.2, 1.8, (g, r) => {
+            g.save(); g.shadowColor = 'rgba(0,242,254,0.7)'; g.shadowBlur = 30;
+            g.lineWidth = 6; g.strokeStyle = 'rgba(0,242,254,0.6)'; rr(g, r.x - 4, r.y - 4, r.w + 8, r.h + 8, 28); g.stroke(); g.restore();
+        }, { order: 1 });
+        put(frame, videoGroup, 0, 0, -0.01);
+
+        const poster = new Panel(3.2, 1.8, (g, r) => {
+            const gr = g.createLinearGradient(0, 0, r.w, r.h);
+            gr.addColorStop(0, '#0a0f1d'); gr.addColorStop(1, '#04060d');
+            g.fillStyle = gr; g.fillRect(0, 0, r.w, r.h);
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.save(); g.shadowColor = '#00f2fe'; g.shadowBlur = 50;
+            g.fillStyle = '#00f2fe'; g.font = `800 ${r.h * 0.3}px ${FONT}`;
+            g.fillText('CEAM', r.w / 2, r.h * 0.38); g.restore();
+            g.fillStyle = '#ffffff'; g.font = `600 ${r.h * 0.085}px ${FONT}`;
+            g.fillText('Tradición de Excelencia', r.w / 2, r.h * 0.6);
+            g.fillStyle = '#7dd3fc'; g.font = `400 ${r.h * 0.05}px ${FONT}`;
+            g.fillText('Ahora, en Realidad Virtual', r.w / 2, r.h * 0.72);
+        }, { pad: 0, ppm: 400, transparent: false, order: 2 });
+        put(poster, videoGroup, 0, 0, 0.004);
+
+        const startBtn = makeButton({
+            w: 2.5, h: 0.36, kind: 'center', title: 'Iniciar Experiencia CEAM VR', playIcon: true, fontScale: 0.3,
+            c1: '#00c6ff', c2: '#0072ff', glow: 'rgba(0,198,255,0.8)', order: 14,
+            onClick: () => { window.AudioFX.blip(660, 0.08, 0.1); videoEl.play().catch(() => {}); }
+        });
+        put(startBtn, videoGroup, 0, -0.05, 0.03);
+
+        const skipBtn = makeButton({
+            w: 0.95, h: 0.17, kind: 'center', title: 'Saltar introducción →', solid: true, fontScale: 0.36,
+            c1: 'rgba(15,23,42,0.9)', glow: 'rgba(0,242,254,0.55)', order: 14,
+            onClick: () => { if (typeof window.skipVideo === 'function') window.skipVideo(); }
+        });
+        put(skipBtn, videoGroup, 1.0, -0.74, 0.03);
+
+        const caption = new Panel(3.0, 0.12, (g, r) => {
+            g.fillStyle = '#cbd5e1'; g.font = `400 ${r.h * 0.5}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText('Apunta con el mando o pellizca con la mano para comenzar', r.x + r.w / 2, r.y + r.h / 2);
+        });
+        put(caption, videoGroup, 0, -1.08, 0);
+
+        /* ---- Escena 2: dashboard ---- */
+        const dashGroup = new THREE.Group();
+        dashGroup.position.set(0, 1.55, -2.5);
+        dashGroup.scale.setScalar(0.82);
+        uiRoot.add(dashGroup);
+
+        const headerCard = new Panel(3.1, 0.85, (g, r) => {
+            holoCard(g, r);
+            const cx = r.x + r.w / 2;
+            g.font = `600 26px ${FONT}`; setSpacing(g, 4);
+            const label = 'BIENVENIDA ALUMNOS DEL CEAM 2026';
+            const tw = g.measureText(label).width;
+            g.fillStyle = 'rgba(0,242,254,0.10)'; rr(g, cx - tw / 2 - 32, r.y + 30, tw + 64, 52, 26); g.fill();
+            g.strokeStyle = 'rgba(0,242,254,0.4)'; g.lineWidth = 3; rr(g, cx - tw / 2 - 32, r.y + 30, tw + 64, 52, 26); g.stroke();
+            g.fillStyle = '#00f2fe'; g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText(label, cx + 2, r.y + 57); setSpacing(g, 0);
+            g.font = `800 84px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+            const a = '¡Bienvenidos al ', b = 'CEAM', c = '!';
+            const wa = g.measureText(a).width, wb = g.measureText(b).width, wc = g.measureText(c).width;
+            let x = cx - (wa + wb + wc) / 2; const y = r.y + 190;
+            g.fillStyle = '#fff'; g.fillText(a, x, y); x += wa;
+            const gr = g.createLinearGradient(x, 0, x + wb, 0); gr.addColorStop(0, '#00f2fe'); gr.addColorStop(1, '#4facfe');
+            g.fillStyle = gr; g.fillText(b, x, y); x += wb;
+            g.fillStyle = '#fff'; g.fillText(c, x, y);
+            g.font = `400 29px ${FONT}`; g.fillStyle = '#e2e8f0'; g.textAlign = 'center';
+            wrapText(g, 'Has ingresado con éxito al sistema estelar. Prepárate para explorar mundos virtuales, resolver retos alucinantes y vivir la excelencia académica en realidad virtual.', r.w * 0.86)
+                .forEach((ln, i) => g.fillText(ln, cx, r.y + 255 + i * 40));
+
+            // Créditos visibles dentro de VR
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.font = `400 24px ${FONT}`; g.fillStyle = '#94a3b8';
+            g.fillText('CEAM — Tradición de Excelencia... Ahora, en Realidad Virtual', cx, r.y + 424);
+            g.font = `400 22px ${FONT}`; g.fillStyle = '#64748b';
+            g.fillText('© 2026 César Rajapakse. Todos los derechos reservados.', cx, r.y + 458);
+        }, { order: 10 });
+        put(headerCard, dashGroup, 0, 1.02, 0);
+
+        const selectCard = new Panel(2.5, 1.75, (g, r) => {
+            holoCard(g, r);
+            g.fillStyle = '#00f2fe'; g.font = `600 34px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText('Selecciona tu siguiente destino inmersivo:', r.x + r.w / 2, r.y + 55);
+        }, { order: 10 });
+        put(selectCard, dashGroup, 0, -0.35, 0);
+
+        const appMaze = makeButton({
+            w: 2.2, h: 0.3, kind: 'full', icon: '🧩', title: 'Entrar al Laberinto VR', sub: 'Juego interactivo de laberinto inmersivo',
+            c1: '#10b981', c2: '#047857', glow: 'rgba(16,185,129,0.85)',
+            onClick: () => { if (typeof window.launchApp === 'function') window.launchApp('Laberinto'); }
+        });
+        put(appMaze, dashGroup, 0, 0.16, 0.02);
+        const appA = makeButton({
+            w: 2.2, h: 0.3, kind: 'full', icon: '🚀', title: 'Iniciar First Encounters', sub: 'Exploración interactiva de realidad mixta',
+            c1: '#00c6ff', c2: '#0072ff', glow: 'rgba(0,198,255,0.8)',
+            onClick: () => { if (typeof window.launchApp === 'function') window.launchApp('First Encounters'); }
+        });
+        put(appA, dashGroup, 0, -0.22, 0.02);
+        const appB = makeButton({
+            w: 2.2, h: 0.3, kind: 'full', icon: '🎬', title: 'Abrir Theater Elsewhere', sub: 'Experiencia cinematográfica inmersiva',
+            c1: '#8a2be2', c2: '#4a00e0', glow: 'rgba(138,43,226,0.85)',
+            onClick: () => { if (typeof window.launchApp === 'function') window.launchApp('Theater Elsewhere'); }
+        });
+        put(appB, dashGroup, 0, -0.60, 0.02);
+        const replayBtn = makeButton({
+            w: 1.6, h: 0.13, kind: 'link', title: 'Volver a ver la introducción',
+            onClick: () => { if (typeof window.replayVideo === 'function') window.replayVideo(); }
+        });
+        put(replayBtn, dashGroup, 0, -1.02, 0.02);
+
+        /* ---- Modal ---- */
+        const modalGroup = new THREE.Group();
+        modalGroup.position.set(0, 1.5, -1.9);
+        modalGroup.visible = false;
+        uiRoot.add(modalGroup);
+
+        const overlay = new THREE.Mesh(new THREE.PlaneGeometry(14, 8),
+            new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
+        overlay.renderOrder = 20; overlay.position.z = -0.15;
+        modalGroup.add(overlay);
+
+        const modalCard = new Panel(1.7, 1.0, (g, r, a) => {
+            a = a || { icon: '✨', title: 'Activando Aplicación', msg: '' };
+            holoCard(g, r, 'rgba(0,242,254,0.9)');
+            const cx = r.x + r.w / 2;
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.font = `90px ${FONT}`; g.fillText(a.icon, cx, r.y + 85);
+            g.fillStyle = '#fff'; g.font = `800 50px ${FONT}`; g.fillText(a.title, cx, r.y + 180);
+            g.fillStyle = '#e2e8f0'; g.font = `400 29px ${FONT}`;
+            wrapText(g, a.msg, r.w * 0.82).forEach((ln, i) => g.fillText(ln, cx, r.y + 240 + i * 38));
+        }, { order: 22 });
+        put(modalCard, modalGroup, 0, 0.05, 0);
+        const modalBtn = makeButton({
+            w: 1.3, h: 0.2, kind: 'center', title: 'Entendido', fontScale: 0.38, modal: true, order: 24,
+            c1: '#00c6ff', c2: '#0072ff', glow: 'rgba(0,198,255,0.8)',
+            onClick: () => { if (typeof window.closeModal === 'function') window.closeModal(); }
+        });
+        put(modalBtn, modalGroup, 0, -0.3, 0.02);
+
+        /* ---- Estado / animaciones de UI ---- */
+        let stage = 'intro';
+        let modalOpen = false;
+        const appearing = [];
+        [videoGroup, dashGroup, modalGroup].forEach(g => g.userData.base = g.scale.x);
+
+        function applyStage() {
+            const videoVisible = (stage === 'intro' || stage === 'playing');
+            const vr = renderer.xr.isPresenting;
+            videoGroup.visible = videoVisible;
+            dashGroup.visible = (stage === 'dashboard');
+            // El póster se mantiene hasta que el video realmente se reproduce
+            poster.mesh.visible = videoVisible && (stage === 'intro' || videoEl.paused);
+            // En VR el video arranca solo: sin botón de inicio ni leyenda de "pellizca"
+            startBtn.mesh.visible = (stage === 'intro') && !vr;
+            caption.mesh.visible  = (stage === 'intro') && !vr;
+            skipBtn.mesh.visible  = videoVisible;
+        }
+        applyStage();
+
+        // Ocultar el póster en cuanto el video empieza a mostrar frames
+        videoEl.addEventListener('playing', () => {
+            if (stage === 'playing') poster.mesh.visible = false;
+        });
+
+        let videoCollapse = null;
+        let menuAppear = null;
+
+        function playVideoCollapse() {
+            videoCollapse = { t: 0, duration: 1.0 };
+        }
+        function playMenuAppear() {
+            menuAppear = { t: 0, duration: 1.0 };
+            dashGroup.scale.setScalar(0.01);
+            dashGroup.visible = true;
+            dashGroup.rotation.y = 0.5;
+        }
+
+        const CEAM3D = {
+            setStage(s) {
+                if (s === 'intro' || s === 'playing') {
+                    videoGroup.scale.setScalar(1);
+                    videoGroup.position.set(0, 1.55, -2.6);
+                    videoGroup.rotation.set(0, 0, 0);
+                    videoGroup.traverse(o => {
+                        if (o.material && o.material.userData._origOpacity !== undefined) {
+                            o.material.opacity = o.material.userData._origOpacity;
+                        }
+                    });
+                    videoCollapse = null;
+                    appearing.length = 0;
+                    videoGroup.visible = true;
+                }
+                stage = s;
+                applyStage();
+                if (s === 'dashboard') playMenuAppear();
+            },
+            showModal(title, msg, icon) {
+                modalCard.redraw({ icon: icon || '✨', title, msg });
+                modalOpen = true; modalGroup.visible = true;
+                modalGroup.userData.t = 0;
+                if (!appearing.includes(modalGroup)) appearing.push(modalGroup);
+            },
+            hideModal() { modalOpen = false; modalGroup.visible = false; },
+            isPresenting() { return renderer.xr.isPresenting; },
+            exitVR() { const s = renderer.xr.getSession(); if (s) s.end(); },
+            playVideoCollapse,
+            playMenuAppear
+        };
+        window.CEAM3D = CEAM3D;
+
+        /* ===============================================================
+           Punteros
+        =============================================================== */
+        const raycaster = new THREE.Raycaster();
+        const tmpM = new THREE.Matrix4();
+        const controllers = [];
+        function pulse(c, intensity, ms) {
+            try {
+                const gp = c.userData.input && c.userData.input.gamepad;
+                const act = gp && gp.hapticActuators && gp.hapticActuators[0];
+                if (act && act.pulse) { const p = act.pulse(intensity, ms); if (p && p.catch) p.catch(() => {}); }
+            } catch (e) {}
+        }
+        for (let i = 0; i < 2; i++) {
+            const c = renderer.xr.getController(i);
+            c.userData = { connected: false, input: null, hit: null, prevHit: null };
+            const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+            const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x00f2fe, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending }));
+            line.name = 'ray'; line.scale.z = 2;
+            c.add(line);
+            c.add(new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), new THREE.MeshBasicMaterial({ color: 0x9be8ff })));
+            const dot = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+            dot.visible = false; dot.renderOrder = 30; scene.add(dot);
+            c.userData.dot = dot;
+            c.addEventListener('connected', e => { c.userData.connected = true; c.userData.input = e.data; });
+            c.addEventListener('disconnected', () => { c.userData.connected = false; c.userData.input = null; });
+            c.addEventListener('selectstart', () => {
+                const b = c.userData.hit;
+                if (b) { b.press = 0.18; pulse(c, 0.8, 60); if (b.onClick) b.onClick(); }
+            });
+            scene.add(c);
+            controllers.push(c);
+        }
+        function isShown(o) { while (o) { if (!o.visible) return false; o = o.parent; } return true; }
+        function updatePointers() {
+            const targets = allButtons.filter(b => isShown(b.mesh) && (!modalOpen || b.modal));
+            const meshes = targets.map(b => b.mesh);
+            const hovered = new Set();
+            controllers.forEach(c => {
+                const ray = c.getObjectByName('ray'), dot = c.userData.dot;
+                c.userData.hit = null; dot.visible = false; ray.scale.z = 2;
+                if (!c.userData.connected || !c.visible) { c.userData.prevHit = null; return; }
+                tmpM.identity().extractRotation(c.matrixWorld);
+                raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM);
+                const hits = raycaster.intersectObjects(meshes, false);
+                if (hits.length) {
+                    const h = hits[0], b = h.object.userData.button;
+                    c.userData.hit = b; hovered.add(b);
+                    ray.scale.z = h.distance; dot.position.copy(h.point); dot.visible = true;
+                }
+                if (c.userData.hit && c.userData.hit !== c.userData.prevHit) pulse(c, 0.25, 25);
+                c.userData.prevHit = c.userData.hit;
+            });
+            allButtons.forEach(b => b.setHover(hovered.has(b)));
+        }
+        function updateUI(dt) {
+            allButtons.forEach(b => {
+                b.press = Math.max(0, b.press - dt);
+                const target = (b.hover ? 1.04 : 1) * (b.press > 0 ? 0.96 : 1);
+                b.scaleNow += (target - b.scaleNow) * Math.min(1, dt * 14);
+                b.mesh.scale.setScalar(b.scaleNow);
+            });
+            for (let i = appearing.length - 1; i >= 0; i--) {
+                const g = appearing[i];
+                g.userData.t += dt / 0.45;
+                const e = 1 - Math.pow(1 - Math.min(g.userData.t, 1), 3);
+                g.scale.setScalar(g.userData.base * (0.88 + 0.12 * e));
+                if (g.userData.t >= 1) appearing.splice(i, 1);
+            }
+            if (videoCollapse) {
+                videoCollapse.t += dt / videoCollapse.duration;
+                const p = Math.min(videoCollapse.t, 1);
+                const ease = 1 - Math.pow(1 - p, 3);
+                videoGroup.scale.setScalar(1 - ease * 0.9);
+                videoGroup.position.z = -2.6 - ease * 3;
+                videoGroup.position.y = 1.55 + ease * 0.8;
+                videoGroup.rotation.z = ease * 0.4;
+                videoGroup.traverse(o => {
+                    if (o.material && o.material.opacity !== undefined) {
+                        if (o.material.userData._origOpacity === undefined) o.material.userData._origOpacity = o.material.opacity;
+                        o.material.transparent = true;
+                        o.material.opacity = o.material.userData._origOpacity * (1 - ease);
+                    }
+                });
+                if (p >= 1) {
+                    videoGroup.visible = false;
+                    videoGroup.traverse(o => {
+                        if (o.material && o.material.userData._origOpacity !== undefined) {
+                            o.material.opacity = o.material.userData._origOpacity;
+                        }
+                    });
+                    videoCollapse = null;
+                }
+            }
+            if (menuAppear) {
+                menuAppear.t += dt / menuAppear.duration;
+                const p = Math.min(menuAppear.t, 1);
+                const ease = 1 - Math.pow(1 - p, 3);
+                const overshoot = 1 + 0.15 * Math.sin(p * Math.PI);
+                dashGroup.scale.setScalar(0.82 * ease * overshoot);
+                dashGroup.rotation.y = (1 - ease) * 0.5;
+                if (p >= 1) {
+                    dashGroup.scale.setScalar(0.82);
+                    dashGroup.rotation.y = 0;
+                    menuAppear = null;
+                }
+            }
+        }
+
+        /* ===============================================================
+           Entrar / salir de VR
+        =============================================================== */
+        const vrGateBtn = document.getElementById('vr-gate-btn');
+        const vrGateLabel = document.getElementById('vr-gate-label');
+        const vrGateHint = document.getElementById('vr-gate-hint');
+
+        function setGate(label, enabled, hint) {
+            vrGateLabel.textContent = label;
+            vrGateBtn.disabled = !enabled;
+            if (hint !== undefined) vrGateHint.textContent = hint;
+        }
+
+        async function checkVR() {
+            const screenBtn = document.getElementById('screen-mode-btn');
+            const showScreenBtn = () => { if (screenBtn) screenBtn.classList.remove('hidden'); };
+
+            if (!window.isSecureContext) {
+                setGate('VR no disponible', false, 'Necesitas HTTPS para VR. Puedes ver la experiencia en pantalla.');
+                showScreenBtn();
+                return;
+            }
+            if (!navigator.xr) {
+                setGate('VR no disponible', false, 'Este navegador no soporta WebXR. Puedes ver la experiencia en pantalla.');
+                showScreenBtn();
+                return;
+            }
+            try {
+                const ok = await navigator.xr.isSessionSupported('immersive-vr');
+                if (ok) {
+                    setGate('Entrar en modo VR', true, 'Presiona para iniciar la experiencia automáticamente');
+                    showScreenBtn();
+                } else {
+                    setGate('VR no disponible', false, 'Este dispositivo no reporta soporte VR inmersivo. Puedes ver la experiencia en pantalla.');
+                    showScreenBtn();
+                }
+            } catch (e) {
+                setGate('VR no disponible', false, 'No se pudo comprobar el soporte VR. Puedes ver la experiencia en pantalla.');
+                showScreenBtn();
+            }
+        }
+
+        window.enterVR = async function () {
+            await AudioFX.resume();
+            AudioFX.startAmbient();
+            if (!navigator.xr) return;
+            if (renderer.xr.isPresenting) { renderer.xr.getSession().end(); return; }
+            try {
+                const session = await navigator.xr.requestSession('immersive-vr', {
+                    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+                });
+                await renderer.xr.setSession(session);
+            } catch (e) {
+                console.error('No se pudo iniciar la sesión VR:', e);
+                if (vrGateHint) vrGateHint.textContent = 'No se pudo iniciar VR: ' + (e && e.message ? e.message : e);
+            }
+        };
+
+        renderer.xr.addEventListener('sessionstart', () => {
+            uiRoot.visible = true;
+            uScale.value = 1.5;
+            applyStage();
+            vrGateLabel.textContent = 'Salir de VR';
+            if (typeof window.onVRStarted === 'function') window.onVRStarted();
+        });
+        renderer.xr.addEventListener('sessionend', () => {
+            uiRoot.visible = false;
+            uScale.value = DPR;
+            camera.position.copy(headRef);
+            camera.rotation.set(0, 0, 0);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setPixelRatio(DPR);
+            renderer.setSize(window.innerWidth, window.innerHeight, false);
+            if (typeof window.onVRExited === 'function') window.onVRExited();
+        });
+
+        checkVR();
+
+        if (document.fonts && document.fonts.load) {
+            document.fonts.load('800 40px Inter').then(() => document.fonts.ready).then(() => allPanels.forEach(p => p.redraw())).catch(() => {});
+        }
+
+        /* ===============================================================
+           Bucle
+        =============================================================== */
+        const mouse = { x: 0, y: 0 };
+        window.addEventListener('pointermove', e => {
+            mouse.x = e.clientX / window.innerWidth * 2 - 1;
+            mouse.y = e.clientY / window.innerHeight * 2 - 1;
+        });
+        window.addEventListener('resize', () => {
+            if (renderer.xr.isPresenting) return;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight, false);
+        });
+
+        const clock = new THREE.Clock();
+        renderer.setAnimationLoop(() => {
+            const dt = Math.min(clock.getDelta(), 0.05);
+            const t = clock.elapsedTime;
+            uTime.value = t;
+            const presenting = renderer.xr.isPresenting;
+
+            if (!reducedMotion) {
+                starsFar.rotation.y += dt * 0.004;
+                starsFar.rotation.x += dt * 0.0008;
+                sky.rotation.y += dt * 0.002;
+            }
+            planets.forEach(p => {
+                p.body.rotation.y += dt * p.spin;
+                if (p.moonPivot) p.moonPivot.rotation.y += dt * 0.12;
+            });
+            if (presenting) {
+                if (camera.position.y > 0.3) meteorHead.copy(camera.position); else meteorHead.copy(headRef);
+            } else {
+                meteorHead.copy(headRef);
+                camera.rotation.y += (-mouse.x * 0.09 - camera.rotation.y) * 0.04;
+                camera.rotation.x += (-mouse.y * 0.05 - camera.rotation.x) * 0.04;
+                camera.position.x += (mouse.x * 0.35 - camera.position.x) * 0.04;
+                camera.position.y += (HEAD_Y - mouse.y * 0.15 - camera.position.y) * 0.04;
+            }
+            meteors.forEach(m => m.update(dt));
+            bigRocks.forEach(r => {
+                r.mesh.position.addScaledVector(r.vel, dt);
+                r.mesh.rotation.x += r.spin.x * dt; r.mesh.rotation.y += r.spin.y * dt; r.mesh.rotation.z += r.spin.z * dt;
+                const d = r.mesh.position.distanceTo(headRef);
+                if (d > 170) r.mesh.position.sub(headRef).multiplyScalar(-0.85).add(headRef);
+            });
+            if (presenting) { updatePointers(); }
+            updateUI(dt);
+            renderer.render(scene, camera);
+        });
+
+        setTimeout(() => document.body.classList.add('ready'), 100);
+    })();
+    </script>
+
+    <!-- ===================================================================
+         Lógica del flujo cinematográfico
+         =================================================================== -->
+    <script>
+        const videoElement = document.getElementById('intro-video');
+        const videoStage = document.getElementById('video-stage');
+        const dashboardStage = document.getElementById('dashboard-stage');
+        const customModal = document.getElementById('custom-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalIcon = document.getElementById('modal-icon');
+        const vrGateOverlay = document.getElementById('vr-gate');
+
+        let flowState = 'gate';
+
+        window.onVRStarted = function () {
+            if (flowState !== 'gate') return;
+            flowState = 'video';
+            vrGateOverlay.style.opacity = '0';
+            setTimeout(() => { vrGateOverlay.style.display = 'none'; }, 1000);
+            setTimeout(() => {
+                CEAM3D.setStage('playing');
+                videoElement.play().catch(err => {
+                    console.log("Autoplay bloqueado:", err);
+                    goToInterlude();
+                });
+            }, 1200);
+        };
+
+        window.onVRExited = function () {
+            flowState = 'gate';
+            vrGateOverlay.style.display = 'flex';
+            vrGateOverlay.style.opacity = '1';
+            videoElement.pause();
+            videoElement.currentTime = 0;
+            videoStage.style.display = 'none';
+            videoStage.style.opacity = '1';
+            videoStage.style.transform = '';
+            dashboardStage.style.display = 'none';
+            dashboardStage.classList.add('opacity-0', 'scale-95');
+            dashboardStage.classList.remove('opacity-100', 'scale-100');
+            AudioFX.stopAmbient(1);
+        };
+
+        function skipVideo() {
+            videoElement.pause();
+            goToInterlude();
+        }
+        window.skipVideo = skipVideo;
+
+        videoElement.addEventListener('ended', () => {
+            goToInterlude();
+        });
+
+        function goToInterlude() {
+            if (flowState === 'interlude' || flowState === 'menu') return;
+            flowState = 'interlude';
+
+            AudioFX.whooshCollapse();
+            if (CEAM3D.isPresenting() && CEAM3D.playVideoCollapse) CEAM3D.playVideoCollapse();
+
+            videoStage.style.transition = 'transform 1.2s cubic-bezier(0.7, 0, 0.3, 1), opacity 1.2s ease';
+            videoStage.style.transform = 'scale(0.2)';
+            videoStage.style.opacity = '0';
+            setTimeout(() => { videoStage.style.display = 'none'; }, 1200);
+
+            setTimeout(() => openWelcomeMenu(), 3000);
+        }
+        window.goToInterlude = goToInterlude;
+
+        function openWelcomeMenu() {
+            if (flowState === 'menu') return;
+            flowState = 'menu';
+
+            AudioFX.menuReveal();
+            if (CEAM3D.isPresenting()) CEAM3D.setStage('dashboard');
+
+            dashboardStage.style.display = 'flex';
+            dashboardStage.style.opacity = '0';
+            dashboardStage.style.transform = 'scale(0.85)';
+            requestAnimationFrame(() => {
+                dashboardStage.style.transition = 'transform 1s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 1s ease';
+                dashboardStage.style.opacity = '1';
+                dashboardStage.style.transform = 'scale(1)';
+            });
+        }
+        window.openWelcomeMenu = openWelcomeMenu;
+
+        // Modo pantalla (sin VR): inicia el flujo DOM directamente
+        function startScreenMode() {
+            if (flowState !== 'gate') return;
+            flowState = 'video';
+            AudioFX.resume();
+            AudioFX.startAmbient();
+            vrGateOverlay.style.opacity = '0';
+            setTimeout(() => { vrGateOverlay.style.display = 'none'; }, 1000);
+
+            videoStage.style.display = 'flex';
+            videoStage.style.opacity = '1';
+            videoStage.style.transform = '';
+            videoElement.currentTime = 0;
+            setTimeout(() => {
+                videoElement.play().catch(() => {
+                    videoElement.setAttribute('controls', 'true');
+                });
+            }, 400);
+        }
+        window.startScreenMode = startScreenMode;
+
+        function replayVideo() {
+            flowState = 'video';
+            if (CEAM3D.isPresenting()) CEAM3D.setStage('intro');
+            dashboardStage.style.display = 'none';
+            dashboardStage.classList.add('opacity-0', 'scale-95');
+            dashboardStage.classList.remove('opacity-100', 'scale-100');
+            videoStage.style.display = 'flex';
+            videoStage.style.opacity = '1';
+            videoStage.style.transform = '';
+            videoElement.currentTime = 0;
+            setTimeout(() => {
+                if (CEAM3D.isPresenting()) CEAM3D.setStage('playing');
+                videoElement.play().catch(() => {});
+            }, 300);
+        }
+        window.replayVideo = replayVideo;
+
+        const APP_LINKS = {
+            'Laberinto': { url: 'laberinto.html', icon: '🧩', local: true },
+            'First Encounters': { url: 'https://www.meta.com/experiences/first-encounters/6236169136472090/', icon: '🚀' },
+            'Theater Elsewhere': { url: 'https://www.meta.com/experiences/theater-elsewhere/2515021945210953/', icon: '🎬' }
+        };
+
+        function launchApp(appName) {
+            AudioFX.blip(880, 0.1, 0.12);
+            const app = APP_LINKS[appName];
+
+            // Si es un archivo local (laberinto.html), navegamos directo sin modal largo
+            if (app && app.local) {
+                const msg = `Cargando "${appName}"...`;
+                modalTitle.innerText = `Abriendo ${appName}`;
+                modalMessage.innerText = msg;
+                customModal.style.display = 'flex';
+                CEAM3D.showModal(`Abriendo ${appName}`, msg, app.icon);
+                setTimeout(() => {
+                    if (CEAM3D.isPresenting()) CEAM3D.exitVR();
+                    setTimeout(() => window.location.href = app.url, 500);
+                }, 800);
+                return;
+            }
+
+            const title = `Abriendo ${appName}`;
+            const message = `Te llevamos a la ficha de "${appName}" en tu Meta Quest. Pulsa "Abrir" para iniciarla.`;
+            modalTitle.innerText = title;
+            modalMessage.innerText = message;
+            customModal.style.display = 'flex';
+            CEAM3D.showModal(title, message, app ? app.icon : '✨');
+            if (!app) return;
+            setTimeout(() => {
+                if (CEAM3D.isPresenting()) CEAM3D.exitVR();
+                setTimeout(() => window.location.assign(app.url), 300);
+            }, 1500);
+        }
+        window.launchApp = launchApp;
+
+        function closeModal() {
+            AudioFX.blip(660, 0.06, 0.08);
+            customModal.style.display = 'none';
+            CEAM3D.hideModal();
+        }
+        window.closeModal = closeModal;
+
+        // Inicio del audio con el primer gesto (política de autoplay)
+        document.addEventListener('click', function once() {
+            AudioFX.resume();
+            AudioFX.startAmbient();
+            document.removeEventListener('click', once);
+        }, { once: true });
+    </script>
+
+</body>
+</html>
